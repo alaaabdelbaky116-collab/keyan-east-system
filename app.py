@@ -3,13 +3,13 @@ import pandas as pd
 from datetime import datetime
 import sqlite3
 import traceback
-import math  # <--- السطر اللي كان ناقص وتم إضافته هنا
+import math
 import base64
 from PIL import Image
 import io
 import os
 
-DB_NAME = "hr_system_v6.db"
+DB_NAME = "hr_system_v7.db" # تم التحديث لبناء قاعدة بيانات سليمة 100%
 
 # محاولة استدعاء مكتبة الـ GPS الجديدة المستقرة
 try:
@@ -58,7 +58,9 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS Requests (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, req_type TEXT, notes TEXT, status TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
     c.execute('''CREATE TABLE IF NOT EXISTS Locations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, lat REAL, lon REAL, radius REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS WebAttendance (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, time TEXT, action TEXT, location_name TEXT, photo TEXT, project_name TEXT, daily_report TEXT)''')
+    
+    # 💡 تم إصلاح الجدول وإضافة عمود distance
+    c.execute('''CREATE TABLE IF NOT EXISTS WebAttendance (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, time TEXT, action TEXT, distance REAL, location_name TEXT, photo TEXT, project_name TEXT, daily_report TEXT)''')
         
     c.execute("SELECT COUNT(*) FROM Users WHERE role='admin'")
     if c.fetchone()[0] == 0:
