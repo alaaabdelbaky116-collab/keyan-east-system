@@ -9,7 +9,7 @@ from PIL import Image
 import io
 import os
 
-DB_NAME = "hr_system_v10.db" 
+DB_NAME = "hr_system_v11.db" 
 
 try:
     from streamlit_js_eval import get_geolocation
@@ -247,7 +247,8 @@ def admin_portal():
             st.session_state['logged_in'] = False
             st.rerun()
 
-    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات العامة", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 إدارة المواقع والفروع", "📌 سجل التقارير والبصمة"], horizontal=True)
+    # تمت إضافة تبويب النسخ الاحتياطي هنا!
+    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات العامة", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 إدارة المواقع والفروع", "📌 سجل التقارير والبصمة", "💾 النسخ الاحتياطي"], horizontal=True)
     st.divider()
     
     if nav == "📊 تحليل البصمة":
@@ -323,17 +324,38 @@ def admin_portal():
                 st.success("تم التحديث!")
         conn.close()
 
-        # زرار النسخة الاحتياطية
-        st.divider()
-        st.subheader("💾 نسخة احتياطية للبيانات (Backup)")
-        if os.path.exists(DB_NAME):
-            with open(DB_NAME, "rb") as file:
-                st.download_button(
-                    label="📥 تحميل نسخة كاملة من قاعدة البيانات",
-                    data=file,
-                    file_name=f"HR_Backup_{datetime.now().strftime('%Y%m%d')}.db",
-                    mime="application/octet-stream"
-                )
+    # ==================================================
+    # شاشة النسخ الاحتياطي واسترجاع البيانات (الجديدة)
+    # ==================================================
+    elif nav == "💾 النسخ الاحتياطي":
+        st.header("💾 حماية واسترجاع قاعدة البيانات")
+        st.info("⚠️ السيرفر المجاني قد يمسح البيانات عند إعادة التشغيل. حمل نسختك يومياً من هنا، وإذا تم مسح البيانات، قم برفع الملف هنا لاسترجاعها بالكامل.")
+        
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.subheader("1. حفظ البيانات (تحميل)")
+            if os.path.exists(DB_NAME):
+                with open(DB_NAME, "rb") as file:
+                    st.download_button(
+                        label="📥 تحميل نسخة قاعدة البيانات الآن (.db)",
+                        data=file,
+                        file_name=f"HR_Backup_{datetime.now().strftime('%Y%m%d')}.db",
+                        mime="application/octet-stream",
+                        use_container_width=True
+                    )
+            else:
+                st.warning("لم يتم إنشاء قاعدة بيانات بعد.")
+                
+        with c2:
+            st.subheader("2. استرجاع البيانات (رفع)")
+            uploaded_db = st.file_uploader("ارفع ملف النسخة الاحتياطية (.db)", type=['db', 'octet-stream'])
+            if uploaded_db is not None:
+                if st.button("🔄 استرجاع البيانات", type="primary", use_container_width=True):
+                    with open(DB_NAME, "wb") as f:
+                        f.write(uploaded_db.getbuffer())
+                    st.success("✅ تم استرجاع البيانات بنجاح! يتم الآن تنشيط النظام...")
+                    st.rerun()
 
     elif nav == "📍 إدارة المواقع والفروع":
         st.header("📍 إضافة فروع ومواقع الشركة (GPS)")
