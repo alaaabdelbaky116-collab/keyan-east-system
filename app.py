@@ -9,7 +9,7 @@ from PIL import Image
 import io
 import os
 
-DB_NAME = "hr_system_v7.db" # تم التحديث لبناء قاعدة بيانات سليمة 100%
+DB_NAME = "hr_system_v7.db" 
 
 # محاولة استدعاء مكتبة الـ GPS الجديدة المستقرة
 try:
@@ -28,7 +28,7 @@ OFFICIAL_OUT = '18:00'
 GRACE_PERIOD_MINS = 60
 REQUIRED_HOURS = 7
 DEFAULT_ANNUAL_BALANCE = 21
-LOGO_FILE = "logo.png"
+LOGO_FILE = "image_c5a585.png"
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000 
@@ -59,7 +59,6 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
     c.execute('''CREATE TABLE IF NOT EXISTS Locations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, lat REAL, lon REAL, radius REAL)''')
     
-    # 💡 تم إصلاح الجدول وإضافة عمود distance
     c.execute('''CREATE TABLE IF NOT EXISTS WebAttendance (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, time TEXT, action TEXT, distance REAL, location_name TEXT, photo TEXT, project_name TEXT, daily_report TEXT)''')
         
     c.execute("SELECT COUNT(*) FROM Users WHERE role='admin'")
@@ -418,22 +417,72 @@ def manager_portal():
                         conn.commit(); st.rerun()
         conn.close()
         
+    # ================= التعديل الجديد لمدير القسم =================
     elif nav == "📝 تقارير العمل اليومية":
-        st.header(f"تقارير الإنجاز اليومية لموظفي قسم: {emp_dept}")
+        st.header(f"تقارير الإنجاز لموظفي قسم: {emp_dept}")
         conn = sqlite3.connect(DB_NAME)
-        rep_df = pd.read_sql_query("""
+        
+        # جلب قائمة بأسماء الموظفين في القسم
+        emps = conn.execute("SELECT name FROM Employees WHERE department=?", (emp_dept,)).fetchall()
+        emp_list = ["الكل"] + [e[0] for e in emps]
+        
+        # جلب الشهور المتاحة في التقارير
+        months = conn.execute("SELECT DISTINCT substr(date, 1, 7) FROM WebAttendance WHERE action='انصراف'").fetchall()
+        month_list = ["الكل"] + [m[0] for m in months if m[0]]
+        
+        st.write("📌 **أدوات الفلترة والبحث:**")
+        c1, c2 = st.columns(2)
+        selected_emp = c1.selectbox("👤 بحث باسم الموظف:", emp_list)
+        filter_type = c2.radio("📅 فترة التقرير:", ["الكل", "شهر محدد", "يوم محدد"], horizontal=True)
+        
+        selected_month, selected_day = "الكل", None
+        if filter_type == "شهر محدد":
+            selected_month = st.selectbox("اختر الشهر:", month_list)
+        elif filter_type == "يوم محدد":
+            selected_day = st.date_input("اختر اليوم")
+            
+        # بناء جملة الاستعلام بناءً على فلاتر المدير
+        query = """
             SELECT w.date AS 'التاريخ', e.name AS 'الموظف', w.project_name AS 'المشروع', w.daily_report AS 'ما تم إنجازه' 
             FROM WebAttendance w 
             JOIN Employees e ON w.emp_id = e.emp_id 
             WHERE e.department = ? AND w.action = 'انصراف' AND w.daily_report IS NOT NULL
-            ORDER BY w.id DESC
-        """, conn, params=(emp_dept,))
+        """
+        params = [emp_dept]
+        
+        if selected_emp != "الكل":
+            query += " AND e.name = ?"
+            params.append(selected_emp)
+            
+        if filter_type == "شهر محدد" and selected_month != "الكل":
+            query += " AND w.date LIKE ?"
+            params.append(selected_month + "%")
+        elif filter_type == "يوم محدد" and selected_day:
+            query += " AND w.date = ?"
+            params.append(selected_day.strftime("%Y/%m/%d"))
+            
+        query += " ORDER BY w.date DESC, w.id DESC"
+        
+        rep_df = pd.read_sql_query(query, conn, params=params)
         
         if not rep_df.empty:
+            st.success(f"✅ تم العثور على {len(rep_df)} تقرير.")
             st.dataframe(rep_df, use_container_width=True, hide_index=True)
+            
+            # تصدير التقرير (تحويله لملف يمكن لـ Excel قراءته باللغة العربية بفضل utf-8-sig)
+            csv = rep_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 تحميل وطباعة التقرير (Excel/CSV)",
+                data=csv,
+                file_name=f"Team_Reports_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime='text/csv',
+                use_container_width=True
+            )
         else:
-            st.info("لا توجد تقارير إنجاز مسجلة لفريقك حتى الآن.")
+            st.info("لا توجد تقارير إنجاز تطابق خيارات البحث.")
+            
         conn.close()
+    # ==========================================================
         
     elif nav == "👤 لوحتي الشخصية":
         render_employee_dashboard(emp_id, balance)
