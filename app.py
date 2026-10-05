@@ -191,7 +191,7 @@ def login_page():
         try:
             if os.path.exists(LOGO_FILE):
                 img_c1, img_c2, img_c3 = st.columns([1, 1, 1])
-                with img_c2: st.image(LOGO_FILE, width=120)
+                with img_c2: st.image(LOGO_FILE, width=320)
         except: pass
         
         st.markdown("<h2 style='text-align: center; color: #172B4D;'>بوابة Keyan-East</h2>", unsafe_allow_html=True)
