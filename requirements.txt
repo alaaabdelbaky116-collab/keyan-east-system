@@ -3,4 +3,5 @@ pandas
 openpyxl
 Pillow
 streamlit-js-eval
+psycopg2-binary
 xlrd
