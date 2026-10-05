@@ -82,7 +82,7 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL 
+# 3. حماية وتجهيز جداول PostgreSQL وتأكيد حسابات الإدارة
 # ==========================================
 def init_db():
     try:
@@ -102,13 +102,9 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id SERIAL PRIMARY KEY, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
             
-        cur.execute("SELECT COUNT(*) FROM Users WHERE role='admin'")
-        if cur.fetchone()[0] == 0:
-            cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('admin', 'admin123', 'admin', '0') ON CONFLICT (username) DO NOTHING")
-            
-        cur.execute("SELECT COUNT(*) FROM Users WHERE role='owner'")
-        if cur.fetchone()[0] == 0:
-            cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('owner', 'owner123', 'owner', 'owner') ON CONFLICT (username) DO NOTHING")
+        # إجبار إنشاء وتحديث حساب الأدمن والمالك لضمان عدم فقدان الصلاحيات أبداً
+        cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('admin', 'admin123', 'admin', '0') ON CONFLICT (username) DO UPDATE SET role='admin'")
+        cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('owner', 'owner123', 'owner', 'owner') ON CONFLICT (username) DO UPDATE SET role='owner'")
             
         cur.close()
         conn.close()
@@ -323,7 +319,6 @@ def admin_portal():
         users_df = pd.read_sql_query("SELECT username, password, emp_id, role FROM Users", conn)
         conn.close()
         
-        # إعادة تسمية الأعمدة بالعربي لتبدو احترافية
         users_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'الصلاحية الحالية']
         display_map = {"employee": "موظف عادي", "manager": "مدير قسم", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
         users_df['الصلاحية الحالية'] = users_df['الصلاحية الحالية'].map(display_map)
@@ -690,37 +685,4 @@ def render_employee_dashboard(emp_id, balance):
                         daily_rep = st.text_area("التقرير اليومي")
                         if st.button("🔴 تسجيل انصراف", use_container_width=True):
                             if daily_rep.strip():
-                                db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", (emp_id, datetime.now().strftime("%Y/%m/%d"), datetime.now().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
-                                st.success("تم الانصراف بنجاح!")
-                            else: st.error("اكتب التقرير أولاً!")
-                else: st.error(f"❌ أنت خارج النطاق. أقرب فرع ({closest_loc_name}) يبعد {int(min_distance)} متر.")
-            else: st.info("جاري جلب الموقع... يرجى السماح للمتصفح.")
-
-    elif sub_nav == "📝 طلب جديد":
-        with st.form("emp_req"):
-            req_type = st.selectbox("النوع", ["إجازة", "مأمورية", "إذن"])
-            req_date = st.date_input("التاريخ")
-            notes = st.text_input("السبب")
-            if st.form_submit_button("إرسال"):
-                db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
-                st.success("تم!")
-    elif sub_nav == "🌴 سجلاتي":
-        conn = get_db_connection()
-        df = pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,))
-        conn.close()
-        if not df.empty:
-            df.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
-            st.dataframe(df, hide_index=True)
-        else: st.info("لا توجد طلبات.")
-
-# ==========================================
-if not st.session_state['logged_in']: login_page()
-else:
-    role = st.session_state['role']
-    if role == 'admin': admin_portal()
-    elif role == 'manager': manager_portal()
-    elif role == 'owner': owner_portal()
-    elif role == 'accountant': accountant_portal()
-    elif role == 'licensing': licensing_portal()
-    elif role == 'engineer': engineer_portal()
-    else: employee_portal()
+                                db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name,
