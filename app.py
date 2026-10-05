@@ -123,7 +123,7 @@ def process_excel(file):
                 if val in ['Name', 'الاسم', 'الإسم', 'اسم الموظف', 'Employee Name']:
                     try:
                         name = str(df.iloc[r, c + 1]).strip()
-                        emp_id = str(df.iloc[r + 1, c + 1]).strip() # سحب الكود
+                        emp_id = str(df.iloc[r + 1, c + 1]).strip() 
                     except: continue
                     
                     if name.lower() == 'nan' or not name: continue
@@ -133,11 +133,9 @@ def process_excel(file):
                     try: department = str(df.iloc[r, start_col + 1]).strip()
                     except: department = "غير محدد"
                     
-                    # 💡 إنشاء أو تحديث حساب الموظف (الاسم والكود)
                     conn.execute("INSERT OR IGNORE INTO Employees (emp_id, name, department, annual_balance) VALUES (?, ?, ?, ?)", (emp_id, name, department, DEFAULT_ANNUAL_BALANCE))
                     conn.execute("UPDATE Employees SET name=?, department=? WHERE emp_id=?", (name, department, emp_id))
                     
-                    # إنشاء بيانات الدخول (اليوزر والباسورد = كود الموظف)
                     conn.execute("INSERT OR IGNORE INTO Users (username, password, role, emp_id) VALUES (?, ?, 'employee', ?)", (emp_id, emp_id, emp_id))
                     conn.commit()
                     
@@ -322,12 +320,28 @@ def admin_portal():
         st.header("📍 إضافة فروع ومواقع الشركة (GPS)")
         conn = sqlite3.connect(DB_NAME)
         
+        st.markdown("### 🔍 تحديد موقعي الحالي كفرع للشركة")
+        if not GEO_AVAILABLE:
+            st.error("مكتبة 'streamlit-js-eval' غير مثبتة. يرجى إضافتها لملف requirements.txt")
+            admin_lat, admin_lon = 0.0, 0.0
+        else:
+            loc_admin = get_geolocation()
+            admin_lat, admin_lon = 0.0, 0.0
+            if loc_admin and isinstance(loc_admin, dict) and 'coords' in loc_admin:
+                admin_lat = float(loc_admin['coords']['latitude'])
+                admin_lon = float(loc_admin['coords']['longitude'])
+                st.success(f"تم التقاط موقعك بنجاح! خط العرض: {admin_lat:.6f} | خط الطول: {admin_lon:.6f}")
+            else:
+                st.info("جاري جلب موقعك الحالي... يرجى السماح للمتصفح بالوصول للموقع (Allow Location).")
+        
         with st.form("add_location_form"):
-            loc_name = st.text_input("اسم الفرع أو الموقع")
+            loc_name = st.text_input("اسم الفرع أو الموقع (مثال: مقر التجمع الخامس)")
             c1, c2, c3 = st.columns(3)
-            new_lat = c1.number_input("خط العرض (Latitude)", format="%.6f")
-            new_lon = c2.number_input("خط الطول (Longitude)", format="%.6f")
+            # وضعنا الإحداثيات اللي جبناها من الموبايل كقيم افتراضية
+            new_lat = c1.number_input("خط العرض (Latitude)", value=admin_lat, format="%.6f")
+            new_lon = c2.number_input("خط الطول (Longitude)", value=admin_lon, format="%.6f")
             new_rad = c3.number_input("النطاق المسموح (بالمتر)", value=50.0, min_value=10.0)
+            
             if st.form_submit_button("إضافة الموقع", type="primary"):
                 if loc_name.strip() != "":
                     conn.execute("INSERT INTO Locations (name, lat, lon, radius) VALUES (?, ?, ?, ?)", (loc_name, new_lat, new_lon, new_rad))
@@ -525,7 +539,6 @@ def render_employee_dashboard(emp_id, balance):
         elif not GEO_AVAILABLE:
             st.error("مكتبة 'streamlit-js-eval' غير مثبتة.")
         else:
-            # استخدام المكتبة الجديدة والآمنة لجلب الموقع
             loc = get_geolocation()
             
             if loc and isinstance(loc, dict) and 'coords' in loc:
