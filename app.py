@@ -9,9 +9,8 @@ from PIL import Image
 import io
 import os
 
-DB_NAME = "hr_system_v7.db" 
+DB_NAME = "hr_system_v8.db" 
 
-# محاولة استدعاء مكتبة الـ GPS الجديدة المستقرة
 try:
     from streamlit_js_eval import get_geolocation
     GEO_AVAILABLE = True
@@ -47,7 +46,7 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# 2. حماية وتجهيز قاعدة البيانات 
+# 2. قاعدة البيانات والجداول الجديدة
 # ==========================================
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -58,8 +57,11 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS Requests (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, req_type TEXT, notes TEXT, status TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
     c.execute('''CREATE TABLE IF NOT EXISTS Locations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, lat REAL, lon REAL, radius REAL)''')
-    
     c.execute('''CREATE TABLE IF NOT EXISTS WebAttendance (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, time TEXT, action TEXT, distance REAL, location_name TEXT, photo TEXT, project_name TEXT, daily_report TEXT)''')
+    
+    # جداول الحسابات والتراخيص الجديدة
+    c.execute('''CREATE TABLE IF NOT EXISTS ProjectFinancials (id INTEGER PRIMARY KEY AUTOINCREMENT, project_name TEXT, installment_type TEXT, amount REAL, due_date TEXT, status TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id INTEGER PRIMARY KEY AUTOINCREMENT, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT)''')
         
     c.execute("SELECT COUNT(*) FROM Users WHERE role='admin'")
     if c.fetchone()[0] == 0:
@@ -276,8 +278,11 @@ def admin_portal():
             new_emp_id = c1.text_input("كود الموظف")
             new_user = c2.text_input("اسم المستخدم للدخول")
             new_pwd = c1.text_input("كلمة المرور")
-            role_choice = c2.selectbox("صلاحيات الحساب", ["موظف عادي (Employee)", "مدير قسم (Manager)", "مسؤول نظام (Admin)", "مالك (Owner)"])
-            role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
+            
+            # تمت إضافة صلاحيات الحسابات والتراخيص للقائمة
+            role_choice = c2.selectbox("صلاحيات الحساب", ["موظف عادي (Employee)", "مدير قسم (Manager)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"])
+            role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
+            
             if st.form_submit_button("إنشاء الحساب", type="primary"):
                 conn = sqlite3.connect(DB_NAME)
                 try:
@@ -291,7 +296,7 @@ def admin_portal():
         st.header("إدارة حسابات المستخدمين")
         conn = sqlite3.connect(DB_NAME)
         users_df = pd.read_sql_query("SELECT username AS 'اسم المستخدم', password AS 'كلمة المرور', emp_id AS 'كود الموظف', role AS 'الصلاحية الحالية' FROM Users", conn)
-        display_map = {"employee": "موظف عادي", "manager": "مدير قسم", "admin": "مسؤول نظام", "owner": "المالك"}
+        display_map = {"employee": "موظف عادي", "manager": "مدير قسم", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
         users_df['الصلاحية الحالية'] = users_df['الصلاحية الحالية'].map(display_map)
         st.dataframe(users_df, use_container_width=True, hide_index=True)
         
@@ -301,9 +306,9 @@ def admin_portal():
             selected_user = c1.selectbox("اختر الحساب المطلوب تعديله", users_df['اسم المستخدم'].tolist())
             new_username = c2.text_input("اسم المستخدم الجديد (للاحتفاظ به اتركه فارغاً)")
             new_pwd = c1.text_input("كلمة المرور الجديدة (للاحتفاظ بها اتركها فارغة)")
-            new_role_choice = c2.selectbox("الصلاحية الجديدة", ["موظف عادي (Employee)", "مدير قسم (Manager)", "مسؤول نظام (Admin)", "مالك (Owner)"])
+            new_role_choice = c2.selectbox("الصلاحية الجديدة", ["موظف عادي (Employee)", "مدير قسم (Manager)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"])
             if st.form_submit_button("تحديث البيانات", type="primary"):
-                role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
+                role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
                 final_username = new_username.strip() if new_username.strip() else selected_user
                 updates, params = ["role=?"], [role_map[new_role_choice]]
                 if final_username != selected_user:
@@ -381,6 +386,90 @@ def admin_portal():
         conn.close()
 
 # ==========================================
+# بوابة قسم الحسابات (Accountant)
+# ==========================================
+def accountant_portal():
+    with st.sidebar:
+        try:
+            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
+        except: pass
+        st.info(f"مرحباً: {st.session_state['username']} (قسم الحسابات)")
+        if st.button("تسجيل الخروج", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.rerun()
+
+    st.title("💰 إدارة الحسابات والأقساط للمشاريع")
+    project_list = [f"اتحاد {i}" for i in range(1, 46)]
+    
+    with st.form("add_financials"):
+        c1, c2 = st.columns(2)
+        proj = c1.selectbox("المشروع (الاتحاد)", project_list)
+        inst_type = c2.selectbox("نوع القسط", ["قسط تنفيذ", "قسط جهاز", "أخرى"])
+        amount = c1.number_input("المبلغ المطلوب", min_value=0.0, step=100.0)
+        due_date = c2.date_input("تاريخ الاستحقاق")
+        status = st.selectbox("حالة الدفع", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"])
+        
+        if st.form_submit_button("تسجيل القسط", type="primary"):
+            conn = sqlite3.connect(DB_NAME)
+            conn.execute("INSERT INTO ProjectFinancials (project_name, installment_type, amount, due_date, status) VALUES (?, ?, ?, ?, ?)",
+                         (proj, inst_type, amount, due_date.strftime("%Y/%m/%d"), status))
+            conn.commit(); conn.close()
+            st.success("تم تسجيل القسط بنجاح!")
+            
+    st.divider()
+    st.subheader("الأقساط المسجلة")
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query("SELECT project_name AS 'المشروع', installment_type AS 'نوع القسط', amount AS 'المبلغ', due_date AS 'تاريخ الاستحقاق', status AS 'الحالة' FROM ProjectFinancials ORDER BY due_date DESC", conn)
+    if not df.empty:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.info("لا توجد أقساط مسجلة بعد.")
+    conn.close()
+
+# ==========================================
+# بوابة قسم التراخيص (Licensing)
+# ==========================================
+def licensing_portal():
+    with st.sidebar:
+        try:
+            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
+        except: pass
+        st.info(f"مرحباً: {st.session_state['username']} (قسم التراخيص)")
+        if st.button("تسجيل الخروج", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.rerun()
+
+    st.title("📜 إدارة تراخيص المشاريع")
+    project_list = [f"اتحاد {i}" for i in range(1, 46)]
+    
+    with st.form("add_license"):
+        c1, c2 = st.columns(2)
+        proj = c1.selectbox("المشروع (الاتحاد)", project_list)
+        lic_name = c2.text_input("اسم الترخيص (مثال: تصريح حفر، رخصة بناء)")
+        due_date = c1.date_input("تاريخ الانتهاء / التجديد")
+        status = c2.selectbox("حالة الترخيص", ["سارية", "تحت الإجراء", "منتهية"])
+        
+        if st.form_submit_button("تسجيل الترخيص", type="primary"):
+            if lic_name.strip():
+                conn = sqlite3.connect(DB_NAME)
+                conn.execute("INSERT INTO ProjectLicenses (project_name, license_name, due_date, status) VALUES (?, ?, ?, ?)",
+                             (proj, lic_name, due_date.strftime("%Y/%m/%d"), status))
+                conn.commit(); conn.close()
+                st.success("تم تسجيل الترخيص بنجاح!")
+            else:
+                st.error("يرجى كتابة اسم الترخيص.")
+                
+    st.divider()
+    st.subheader("التراخيص المسجلة")
+    conn = sqlite3.connect(DB_NAME)
+    df = pd.read_sql_query("SELECT project_name AS 'المشروع', license_name AS 'الترخيص', due_date AS 'تاريخ الانتهاء', status AS 'الحالة' FROM ProjectLicenses ORDER BY due_date ASC", conn)
+    if not df.empty:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.info("لا توجد تراخيص مسجلة بعد.")
+    conn.close()
+
+# ==========================================
 # 6. بوابة مدير القسم (Manager)
 # ==========================================
 def manager_portal():
@@ -417,16 +506,13 @@ def manager_portal():
                         conn.commit(); st.rerun()
         conn.close()
         
-    # ================= التعديل الجديد لمدير القسم =================
     elif nav == "📝 تقارير العمل اليومية":
         st.header(f"تقارير الإنجاز لموظفي قسم: {emp_dept}")
         conn = sqlite3.connect(DB_NAME)
         
-        # جلب قائمة بأسماء الموظفين في القسم
         emps = conn.execute("SELECT name FROM Employees WHERE department=?", (emp_dept,)).fetchall()
         emp_list = ["الكل"] + [e[0] for e in emps]
         
-        # جلب الشهور المتاحة في التقارير
         months = conn.execute("SELECT DISTINCT substr(date, 1, 7) FROM WebAttendance WHERE action='انصراف'").fetchall()
         month_list = ["الكل"] + [m[0] for m in months if m[0]]
         
@@ -441,7 +527,6 @@ def manager_portal():
         elif filter_type == "يوم محدد":
             selected_day = st.date_input("اختر اليوم")
             
-        # بناء جملة الاستعلام بناءً على فلاتر المدير
         query = """
             SELECT w.date AS 'التاريخ', e.name AS 'الموظف', w.project_name AS 'المشروع', w.daily_report AS 'ما تم إنجازه' 
             FROM WebAttendance w 
@@ -468,8 +553,6 @@ def manager_portal():
         if not rep_df.empty:
             st.success(f"✅ تم العثور على {len(rep_df)} تقرير.")
             st.dataframe(rep_df, use_container_width=True, hide_index=True)
-            
-            # تصدير التقرير (تحويله لملف يمكن لـ Excel قراءته باللغة العربية بفضل utf-8-sig)
             csv = rep_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 label="📥 تحميل وطباعة التقرير (Excel/CSV)",
@@ -482,7 +565,6 @@ def manager_portal():
             st.info("لا توجد تقارير إنجاز تطابق خيارات البحث.")
             
         conn.close()
-    # ==========================================================
         
     elif nav == "👤 لوحتي الشخصية":
         render_employee_dashboard(emp_id, balance)
@@ -501,12 +583,13 @@ def owner_portal():
             st.rerun()
 
     st.title("👑 لوحة تحكم المالك")
-    nav = st.radio("القائمة:", ["📊 متابعة المشاريع (اتحادات)", "👥 ملخص الإنجازات"], horizontal=True)
+    # التعديل: إضافة تبويب جديد لموقف المشاريع (الماليات والتراخيص)
+    nav = st.radio("القائمة:", ["📊 تقارير المهام", "📈 الموقف المالي والتراخيص", "👥 ملخص الإنجازات"], horizontal=True)
     st.divider()
 
     conn = sqlite3.connect(DB_NAME)
     
-    if nav == "📊 متابعة المشاريع (اتحادات)":
+    if nav == "📊 تقارير المهام":
         st.subheader("تقارير الإنجاز اليومية حسب المشروع")
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع لعرض المهام:", project_list)
@@ -524,6 +607,30 @@ def owner_portal():
             st.dataframe(reports, use_container_width=True, hide_index=True)
         else:
             st.info("لم يتم تسجيل أي إنجازات في هذا المشروع حتى الآن.")
+            
+    # التعديل الجديد: شاشة مراقبة التراخيص والأقساط للمالك
+    elif nav == "📈 الموقف المالي والتراخيص":
+        st.subheader("موقف المشروع (أقساط تنفيذ / أقساط جهاز / تراخيص)")
+        project_list = [f"اتحاد {i}" for i in range(1, 46)]
+        selected_project = st.selectbox("اختر المشروع لعرض الموقف المالي والقانوني:", project_list)
+        
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.markdown("### 💰 الأقساط والمطالبات")
+            fin_df = pd.read_sql_query("SELECT installment_type AS 'النوع', amount AS 'المبلغ', due_date AS 'تاريخ الاستحقاق', status AS 'الحالة' FROM ProjectFinancials WHERE project_name = ? ORDER BY due_date ASC", conn, params=(selected_project,))
+            if not fin_df.empty:
+                st.dataframe(fin_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("لا توجد أقساط مسجلة لهذا المشروع.")
+                
+        with c2:
+            st.markdown("### 📜 التراخيص والتصاريح")
+            lic_df = pd.read_sql_query("SELECT license_name AS 'الترخيص', due_date AS 'تاريخ الانتهاء', status AS 'الحالة' FROM ProjectLicenses WHERE project_name = ? ORDER BY due_date ASC", conn, params=(selected_project,))
+            if not lic_df.empty:
+                st.dataframe(lic_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("لا توجد تراخيص مسجلة لهذا المشروع.")
             
     elif nav == "👥 ملخص الإنجازات":
         st.subheader("إحصائيات الإنجاز للمشاريع النشطة")
@@ -665,7 +772,7 @@ def render_employee_dashboard(emp_id, balance):
     conn.close()
 
 # ==========================================
-# التوجيه (Routing)
+# التوجيه (Routing) مع الأدوار الجديدة
 # ==========================================
 if not st.session_state['logged_in']: login_page()
 else:
@@ -673,4 +780,6 @@ else:
     if role == 'admin': admin_portal()
     elif role == 'manager': manager_portal()
     elif role == 'owner': owner_portal()
+    elif role == 'accountant': accountant_portal()
+    elif role == 'licensing': licensing_portal()
     else: employee_portal()
