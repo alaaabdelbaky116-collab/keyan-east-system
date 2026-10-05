@@ -320,8 +320,11 @@ def admin_portal():
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
         conn = get_db_connection()
-        users_df = pd.read_sql_query("SELECT username AS 'اسم المستخدم', password AS 'كلمة المرور', emp_id AS 'كود الموظف', role AS 'الصلاحية الحالية' FROM Users", conn)
+        users_df = pd.read_sql_query("SELECT username, password, emp_id, role FROM Users", conn)
         conn.close()
+        
+        # إعادة تسمية الأعمدة بالعربي لتبدو احترافية
+        users_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'الصلاحية الحالية']
         display_map = {"employee": "موظف عادي", "manager": "مدير قسم", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
         users_df['الصلاحية الحالية'] = users_df['الصلاحية الحالية'].map(display_map)
         st.dataframe(users_df, use_container_width=True, hide_index=True)
@@ -377,9 +380,10 @@ def admin_portal():
         st.divider()
         st.subheader("الفروع المسجلة")
         conn = get_db_connection()
-        locations_df = pd.read_sql_query("SELECT id, name AS 'اسم الموقع', lat AS 'خط العرض', lon AS 'خط الطول', radius AS 'النطاق (متر)' FROM Locations", conn)
+        locations_df = pd.read_sql_query("SELECT id, name, lat, lon, radius FROM Locations", conn)
         conn.close()
         if not locations_df.empty:
+            locations_df.columns = ['id', 'اسم الموقع', 'خط العرض', 'خط الطول', 'النطاق (متر)']
             st.dataframe(locations_df.drop(columns=['id']), use_container_width=True)
             with st.form("delete_loc"):
                 loc_to_delete = st.selectbox("حذف موقع:", locations_df['اسم الموقع'].tolist())
@@ -395,8 +399,9 @@ def admin_portal():
         conn = get_db_connection()
         today_str = datetime.now().strftime("%Y/%m/%d")
         try:
-            web_logs = pd.read_sql_query("SELECT e.name AS 'الاسم', w.location_name AS 'الفرع', w.time AS 'الوقت', w.action AS 'النوع', w.project_name AS 'المشروع', w.photo AS 'صورة الموظف' FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.date=%s ORDER BY w.id DESC", conn, params=(today_str,))
+            web_logs = pd.read_sql_query("SELECT e.name, w.location_name, w.time, w.action, w.project_name, w.photo FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.date=%s ORDER BY w.id DESC", conn, params=(today_str,))
             if not web_logs.empty:
+                web_logs.columns = ['الاسم', 'الفرع', 'الوقت', 'النوع', 'المشروع', 'صورة الموظف']
                 st.dataframe(web_logs, use_container_width=True, hide_index=True, column_config={"صورة الموظف": st.column_config.ImageColumn("صورة الإثبات")})
             else: st.info("لا توجد سجلات حضور لليوم.")
         except Exception as e:
@@ -462,7 +467,7 @@ def manager_portal():
             selected_day = st.date_input("اختر اليوم")
             
         query = """
-            SELECT w.date AS 'التاريخ', e.name AS 'الموظف', w.project_name AS 'المشروع', w.daily_report AS 'ما تم إنجازه' 
+            SELECT w.date, e.name, w.project_name, w.daily_report 
             FROM WebAttendance w 
             JOIN Employees e ON w.emp_id = e.emp_id 
             WHERE e.department = %s AND w.action = 'انصراف' AND w.daily_report IS NOT NULL
@@ -487,6 +492,7 @@ def manager_portal():
         conn.close()
         
         if not rep_df.empty:
+            rep_df.columns = ['التاريخ', 'الموظف', 'المشروع', 'ما تم إنجازه']
             st.success(f"✅ تم العثور على {len(rep_df)} تقرير.")
             st.dataframe(rep_df, use_container_width=True, hide_index=True)
             csv = rep_df.to_csv(index=False).encode('utf-8-sig')
@@ -514,8 +520,10 @@ def owner_portal():
     if nav == "📊 تقارير المهام":
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع لعرض المهام:", project_list)
-        reports = pd.read_sql_query("SELECT w.date AS 'التاريخ', e.name AS 'الموظف', e.department AS 'القسم', w.daily_report AS 'ما تم إنجازه' FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.project_name = %s AND w.action = 'انصراف' ORDER BY w.id DESC", conn, params=(selected_project,))
-        if not reports.empty: st.dataframe(reports, use_container_width=True, hide_index=True)
+        reports = pd.read_sql_query("SELECT w.date, e.name, e.department, w.daily_report FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.project_name = %s AND w.action = 'انصراف' ORDER BY w.id DESC", conn, params=(selected_project,))
+        if not reports.empty: 
+            reports.columns = ['التاريخ', 'الموظف', 'القسم', 'ما تم إنجازه']
+            st.dataframe(reports, use_container_width=True, hide_index=True)
         else: st.info("لا يوجد.")
             
     elif nav == "📈 الموقف المالي والهندسي والقانوني":
@@ -524,20 +532,32 @@ def owner_portal():
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("### 💰 الأقساط")
-            fin_df = pd.read_sql_query("SELECT installment_type AS 'النوع', amount AS 'المبلغ', due_date AS 'تاريخ الاستحقاق', status AS 'الحالة' FROM ProjectFinancials WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
-            st.dataframe(fin_df, use_container_width=True, hide_index=True) if not fin_df.empty else st.info("لا يوجد")
+            fin_df = pd.read_sql_query("SELECT installment_type, amount, due_date, status FROM ProjectFinancials WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
+            if not fin_df.empty:
+                fin_df.columns = ['النوع', 'المبلغ', 'تاريخ الاستحقاق', 'الحالة']
+                st.dataframe(fin_df, use_container_width=True, hide_index=True)
+            else: st.info("لا يوجد")
         with c2:
             st.markdown("### 📜 التراخيص")
-            lic_df = pd.read_sql_query("SELECT license_name AS 'الترخيص', due_date AS 'الانتهاء', status AS 'الحالة' FROM ProjectLicenses WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
-            st.dataframe(lic_df, use_container_width=True, hide_index=True) if not lic_df.empty else st.info("لا يوجد")
+            lic_df = pd.read_sql_query("SELECT license_name, due_date, status FROM ProjectLicenses WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
+            if not lic_df.empty:
+                lic_df.columns = ['الترخيص', 'الانتهاء', 'الحالة']
+                st.dataframe(lic_df, use_container_width=True, hide_index=True)
+            else: st.info("لا يوجد")
         with c3:
             st.markdown("### 📐 الرسومات")
-            draw_df = pd.read_sql_query("SELECT drawing_name AS 'الرسم', due_date AS 'التسليم', status AS 'الحالة' FROM ProjectDrawings WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
-            st.dataframe(draw_df, use_container_width=True, hide_index=True) if not draw_df.empty else st.info("لا يوجد")
+            draw_df = pd.read_sql_query("SELECT drawing_name, due_date, status FROM ProjectDrawings WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
+            if not draw_df.empty:
+                draw_df.columns = ['الرسم', 'التسليم', 'الحالة']
+                st.dataframe(draw_df, use_container_width=True, hide_index=True)
+            else: st.info("لا يوجد")
             
     elif nav == "👥 ملخص الإنجازات":
-        summary = pd.read_sql_query("SELECT project_name AS 'اسم المشروع', COUNT(*) AS 'إجمالي المهام' FROM WebAttendance WHERE action='انصراف' AND project_name IS NOT NULL GROUP BY project_name ORDER BY COUNT(*) DESC", conn)
-        st.dataframe(summary, use_container_width=True, hide_index=True) if not summary.empty else st.info("لا يوجد")
+        summary = pd.read_sql_query("SELECT project_name, COUNT(*) FROM WebAttendance WHERE action='انصراف' AND project_name IS NOT NULL GROUP BY project_name ORDER BY COUNT(*) DESC", conn)
+        if not summary.empty:
+            summary.columns = ['اسم المشروع', 'إجمالي المهام']
+            st.dataframe(summary, use_container_width=True, hide_index=True)
+        else: st.info("لا يوجد")
     conn.close()
 
 def accountant_portal():
@@ -559,8 +579,11 @@ def accountant_portal():
                 db_execute("INSERT INTO ProjectFinancials (project_name, installment_type, amount, due_date, status) VALUES (%s, %s, %s, %s, %s)", (proj, inst_type, amount, due_date.strftime("%Y/%m/%d"), status))
                 st.success("تم!")
         conn = get_db_connection()
-        st.dataframe(pd.read_sql_query("SELECT project_name AS 'المشروع', installment_type AS 'النوع', amount AS 'المبلغ', due_date AS 'تاريخ', status AS 'الحالة' FROM ProjectFinancials", conn), hide_index=True)
+        df = pd.read_sql_query("SELECT project_name, installment_type, amount, due_date, status FROM ProjectFinancials", conn)
         conn.close()
+        if not df.empty:
+            df.columns = ['المشروع', 'النوع', 'المبلغ', 'تاريخ', 'الحالة']
+            st.dataframe(df, hide_index=True)
     else: render_employee_dashboard(emp_id, balance)
 
 def licensing_portal():
@@ -581,8 +604,11 @@ def licensing_portal():
                 db_execute("INSERT INTO ProjectLicenses (project_name, license_name, due_date, status) VALUES (%s, %s, %s, %s)", (proj, lic_name, due_date.strftime("%Y/%m/%d"), status))
                 st.success("تم!")
         conn = get_db_connection()
-        st.dataframe(pd.read_sql_query("SELECT * FROM ProjectLicenses", conn), hide_index=True)
+        df = pd.read_sql_query("SELECT project_name, license_name, due_date, status FROM ProjectLicenses", conn)
         conn.close()
+        if not df.empty:
+            df.columns = ['المشروع', 'الترخيص', 'تاريخ الانتهاء', 'الحالة']
+            st.dataframe(df, hide_index=True)
     else: render_employee_dashboard(emp_id, balance)
 
 def engineer_portal():
@@ -603,8 +629,11 @@ def engineer_portal():
                 db_execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status) VALUES (%s, %s, %s, %s)", (proj, draw_name, due_date.strftime("%Y/%m/%d"), status))
                 st.success("تم!")
         conn = get_db_connection()
-        st.dataframe(pd.read_sql_query("SELECT * FROM ProjectDrawings", conn), hide_index=True)
+        df = pd.read_sql_query("SELECT project_name, drawing_name, due_date, status FROM ProjectDrawings", conn)
         conn.close()
+        if not df.empty:
+            df.columns = ['المشروع', 'اسم الرسم', 'تاريخ التسليم', 'الحالة']
+            st.dataframe(df, hide_index=True)
     else: render_employee_dashboard(emp_id, balance)
 
 def employee_portal():
@@ -671,14 +700,18 @@ def render_employee_dashboard(emp_id, balance):
         with st.form("emp_req"):
             req_type = st.selectbox("النوع", ["إجازة", "مأمورية", "إذن"])
             req_date = st.date_input("التاريخ")
-            notes = st.text_area("السبب")
+            notes = st.text_input("السبب")
             if st.form_submit_button("إرسال"):
                 db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
                 st.success("تم!")
     elif sub_nav == "🌴 سجلاتي":
         conn = get_db_connection()
-        st.dataframe(pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,)), hide_index=True)
+        df = pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,))
         conn.close()
+        if not df.empty:
+            df.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
+            st.dataframe(df, hide_index=True)
+        else: st.info("لا توجد طلبات.")
 
 # ==========================================
 if not st.session_state['logged_in']: login_page()
