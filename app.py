@@ -18,7 +18,7 @@ OFFICIAL_OUT = '18:00'
 GRACE_PERIOD_MINS = 60
 REQUIRED_HOURS = 7
 DEFAULT_ANNUAL_BALANCE = 21
-LOGO_FILE = "logo.png"
+LOGO_FILE = "image_c5a585.png"
 
 def format_hhmm(total_minutes):
     if not total_minutes or pd.isna(total_minutes) or total_minutes <= 0:
