@@ -323,6 +323,18 @@ def admin_portal():
                 st.success("تم التحديث!")
         conn.close()
 
+        # زرار النسخة الاحتياطية
+        st.divider()
+        st.subheader("💾 نسخة احتياطية للبيانات (Backup)")
+        if os.path.exists(DB_NAME):
+            with open(DB_NAME, "rb") as file:
+                st.download_button(
+                    label="📥 تحميل نسخة كاملة من قاعدة البيانات",
+                    data=file,
+                    file_name=f"HR_Backup_{datetime.now().strftime('%Y%m%d')}.db",
+                    mime="application/octet-stream"
+                )
+
     elif nav == "📍 إدارة المواقع والفروع":
         st.header("📍 إضافة فروع ومواقع الشركة (GPS)")
         conn = sqlite3.connect(DB_NAME)
@@ -852,7 +864,7 @@ def render_employee_dashboard(emp_id, balance):
     conn.close()
 
 # ==========================================
-# التوجيه (Routing)
+# التوجيه (Routing) مع الأدوار الجديدة
 # ==========================================
 if not st.session_state['logged_in']: login_page()
 else:
