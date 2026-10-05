@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import sqlite3
 import traceback
+import math  # <--- السطر اللي كان ناقص وتم إضافته هنا
 import base64
 from PIL import Image
 import io
@@ -337,7 +338,6 @@ def admin_portal():
         with st.form("add_location_form"):
             loc_name = st.text_input("اسم الفرع أو الموقع (مثال: مقر التجمع الخامس)")
             c1, c2, c3 = st.columns(3)
-            # وضعنا الإحداثيات اللي جبناها من الموبايل كقيم افتراضية
             new_lat = c1.number_input("خط العرض (Latitude)", value=admin_lat, format="%.6f")
             new_lon = c2.number_input("خط الطول (Longitude)", value=admin_lon, format="%.6f")
             new_rad = c3.number_input("النطاق المسموح (بالمتر)", value=50.0, min_value=10.0)
