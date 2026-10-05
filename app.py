@@ -9,7 +9,7 @@ from PIL import Image
 import io
 import os
 
-DB_NAME = "hr_system_v9.db" 
+DB_NAME = "hr_system_v10.db" 
 
 try:
     from streamlit_js_eval import get_geolocation
@@ -389,6 +389,9 @@ def admin_portal():
 # بوابة قسم الحسابات (Accountant)
 # ==========================================
 def accountant_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+    
     with st.sidebar:
         try:
             if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
@@ -398,38 +401,48 @@ def accountant_portal():
             st.session_state['logged_in'] = False
             st.rerun()
 
-    st.title("💰 إدارة الحسابات والأقساط للمشاريع")
-    project_list = [f"اتحاد {i}" for i in range(1, 46)]
-    
-    with st.form("add_financials"):
-        c1, c2 = st.columns(2)
-        proj = c1.selectbox("المشروع (الاتحاد)", project_list)
-        inst_type = c2.selectbox("نوع القسط", ["قسط تنفيذ", "قسط جهاز", "أخرى"])
-        amount = c1.number_input("المبلغ المطلوب", min_value=0.0, step=100.0)
-        due_date = c2.date_input("تاريخ الاستحقاق")
-        status = st.selectbox("حالة الدفع", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"])
-        
-        if st.form_submit_button("تسجيل القسط", type="primary"):
-            conn = sqlite3.connect(DB_NAME)
-            conn.execute("INSERT INTO ProjectFinancials (project_name, installment_type, amount, due_date, status) VALUES (?, ?, ?, ?, ?)",
-                         (proj, inst_type, amount, due_date.strftime("%Y/%m/%d"), status))
-            conn.commit(); conn.close()
-            st.success("تم تسجيل القسط بنجاح!")
-            
+    nav = st.radio("القائمة الرئيسية:", ["💰 إدارة الحسابات والأقساط", "👤 لوحتي الشخصية (بصمة وطلبات)"], horizontal=True)
     st.divider()
-    st.subheader("الأقساط المسجلة")
-    conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT project_name AS 'المشروع', installment_type AS 'نوع القسط', amount AS 'المبلغ', due_date AS 'تاريخ الاستحقاق', status AS 'الحالة' FROM ProjectFinancials ORDER BY due_date DESC", conn)
-    if not df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("لا توجد أقساط مسجلة بعد.")
-    conn.close()
+
+    if nav == "💰 إدارة الحسابات والأقساط":
+        st.title("💰 إدارة الحسابات والأقساط للمشاريع")
+        project_list = [f"اتحاد {i}" for i in range(1, 46)]
+        
+        with st.form("add_financials"):
+            c1, c2 = st.columns(2)
+            proj = c1.selectbox("المشروع (الاتحاد)", project_list)
+            inst_type = c2.selectbox("نوع القسط", ["قسط تنفيذ", "قسط جهاز", "أخرى"])
+            amount = c1.number_input("المبلغ المطلوب", min_value=0.0, step=100.0)
+            due_date = c2.date_input("تاريخ الاستحقاق")
+            status = st.selectbox("حالة الدفع", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"])
+            
+            if st.form_submit_button("تسجيل القسط", type="primary"):
+                conn = sqlite3.connect(DB_NAME)
+                conn.execute("INSERT INTO ProjectFinancials (project_name, installment_type, amount, due_date, status) VALUES (?, ?, ?, ?, ?)",
+                             (proj, inst_type, amount, due_date.strftime("%Y/%m/%d"), status))
+                conn.commit(); conn.close()
+                st.success("تم تسجيل القسط بنجاح!")
+                
+        st.divider()
+        st.subheader("الأقساط المسجلة")
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query("SELECT project_name AS 'المشروع', installment_type AS 'نوع القسط', amount AS 'المبلغ', due_date AS 'تاريخ الاستحقاق', status AS 'الحالة' FROM ProjectFinancials ORDER BY due_date DESC", conn)
+        if not df.empty:
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد أقساط مسجلة بعد.")
+        conn.close()
+
+    elif nav == "👤 لوحتي الشخصية (بصمة وطلبات)":
+        render_employee_dashboard(emp_id, balance)
 
 # ==========================================
 # بوابة قسم التراخيص (Licensing)
 # ==========================================
 def licensing_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+
     with st.sidebar:
         try:
             if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
@@ -439,40 +452,50 @@ def licensing_portal():
             st.session_state['logged_in'] = False
             st.rerun()
 
-    st.title("📜 إدارة تراخيص المشاريع")
-    project_list = [f"اتحاد {i}" for i in range(1, 46)]
-    
-    with st.form("add_license"):
-        c1, c2 = st.columns(2)
-        proj = c1.selectbox("المشروع (الاتحاد)", project_list)
-        lic_name = c2.text_input("اسم الترخيص (مثال: تصريح حفر، رخصة بناء)")
-        due_date = c1.date_input("تاريخ الانتهاء / التجديد")
-        status = c2.selectbox("حالة الترخيص", ["سارية", "تحت الإجراء", "منتهية"])
-        
-        if st.form_submit_button("تسجيل الترخيص", type="primary"):
-            if lic_name.strip():
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("INSERT INTO ProjectLicenses (project_name, license_name, due_date, status) VALUES (?, ?, ?, ?)",
-                             (proj, lic_name, due_date.strftime("%Y/%m/%d"), status))
-                conn.commit(); conn.close()
-                st.success("تم تسجيل الترخيص بنجاح!")
-            else:
-                st.error("يرجى كتابة اسم الترخيص.")
-                
+    nav = st.radio("القائمة الرئيسية:", ["📜 إدارة التراخيص", "👤 لوحتي الشخصية (بصمة وطلبات)"], horizontal=True)
     st.divider()
-    st.subheader("التراخيص المسجلة")
-    conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT project_name AS 'المشروع', license_name AS 'الترخيص', due_date AS 'تاريخ الانتهاء', status AS 'الحالة' FROM ProjectLicenses ORDER BY due_date ASC", conn)
-    if not df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("لا توجد تراخيص مسجلة بعد.")
-    conn.close()
+
+    if nav == "📜 إدارة التراخيص":
+        st.title("📜 إدارة تراخيص المشاريع")
+        project_list = [f"اتحاد {i}" for i in range(1, 46)]
+        
+        with st.form("add_license"):
+            c1, c2 = st.columns(2)
+            proj = c1.selectbox("المشروع (الاتحاد)", project_list)
+            lic_name = c2.text_input("اسم الترخيص (مثال: تصريح حفر، رخصة بناء)")
+            due_date = c1.date_input("تاريخ الانتهاء / التجديد")
+            status = c2.selectbox("حالة الترخيص", ["سارية", "تحت الإجراء", "منتهية"])
+            
+            if st.form_submit_button("تسجيل الترخيص", type="primary"):
+                if lic_name.strip():
+                    conn = sqlite3.connect(DB_NAME)
+                    conn.execute("INSERT INTO ProjectLicenses (project_name, license_name, due_date, status) VALUES (?, ?, ?, ?)",
+                                 (proj, lic_name, due_date.strftime("%Y/%m/%d"), status))
+                    conn.commit(); conn.close()
+                    st.success("تم تسجيل الترخيص بنجاح!")
+                else:
+                    st.error("يرجى كتابة اسم الترخيص.")
+                    
+        st.divider()
+        st.subheader("التراخيص المسجلة")
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query("SELECT project_name AS 'المشروع', license_name AS 'الترخيص', due_date AS 'تاريخ الانتهاء', status AS 'الحالة' FROM ProjectLicenses ORDER BY due_date ASC", conn)
+        if not df.empty:
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد تراخيص مسجلة بعد.")
+        conn.close()
+
+    elif nav == "👤 لوحتي الشخصية (بصمة وطلبات)":
+        render_employee_dashboard(emp_id, balance)
 
 # ==========================================
 # بوابة المهندسين (Engineer) للرسومات التنفيذية
 # ==========================================
 def engineer_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+
     with st.sidebar:
         try:
             if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
@@ -482,35 +505,42 @@ def engineer_portal():
             st.session_state['logged_in'] = False
             st.rerun()
 
-    st.title("📐 إدارة الرسومات التنفيذية (Shop/As-Built Drawings)")
-    project_list = [f"اتحاد {i}" for i in range(1, 46)]
-    
-    with st.form("add_drawing"):
-        c1, c2 = st.columns(2)
-        proj = c1.selectbox("المشروع (الاتحاد)", project_list)
-        draw_name = c2.text_input("اسم/نوع الرسم (مثال: إنشائي، معماري، حصر)")
-        due_date = c1.date_input("تاريخ التسليم المستهدف")
-        status = c2.selectbox("حالة الرسم", ["قيد التنفيذ", "تحت المراجعة", "تعديل", "مكتملة"])
-        
-        if st.form_submit_button("تسجيل الرسم التنفيذي", type="primary"):
-            if draw_name.strip():
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status) VALUES (?, ?, ?, ?)",
-                             (proj, draw_name, due_date.strftime("%Y/%m/%d"), status))
-                conn.commit(); conn.close()
-                st.success("تم تسجيل الرسم بنجاح!")
-            else:
-                st.error("يرجى كتابة اسم الرسم.")
-                
+    nav = st.radio("القائمة الرئيسية:", ["📐 إدارة الرسومات التنفيذية", "👤 لوحتي الشخصية (بصمة وطلبات)"], horizontal=True)
     st.divider()
-    st.subheader("الرسومات المسجلة")
-    conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT project_name AS 'المشروع', drawing_name AS 'الرسم التنفيذي', due_date AS 'تاريخ التسليم', status AS 'الحالة' FROM ProjectDrawings ORDER BY due_date ASC", conn)
-    if not df.empty:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("لا توجد رسومات مسجلة بعد.")
-    conn.close()
+
+    if nav == "📐 إدارة الرسومات التنفيذية":
+        st.title("📐 إدارة الرسومات التنفيذية (Shop/As-Built)")
+        project_list = [f"اتحاد {i}" for i in range(1, 46)]
+        
+        with st.form("add_drawing"):
+            c1, c2 = st.columns(2)
+            proj = c1.selectbox("المشروع (الاتحاد)", project_list)
+            draw_name = c2.text_input("اسم/نوع الرسم (مثال: إنشائي، معماري، حصر)")
+            due_date = c1.date_input("تاريخ التسليم المستهدف")
+            status = c2.selectbox("حالة الرسم", ["قيد التنفيذ", "تحت المراجعة", "تعديل", "مكتملة"])
+            
+            if st.form_submit_button("تسجيل الرسم التنفيذي", type="primary"):
+                if draw_name.strip():
+                    conn = sqlite3.connect(DB_NAME)
+                    conn.execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status) VALUES (?, ?, ?, ?)",
+                                 (proj, draw_name, due_date.strftime("%Y/%m/%d"), status))
+                    conn.commit(); conn.close()
+                    st.success("تم تسجيل الرسم بنجاح!")
+                else:
+                    st.error("يرجى كتابة اسم الرسم.")
+                    
+        st.divider()
+        st.subheader("الرسومات المسجلة")
+        conn = sqlite3.connect(DB_NAME)
+        df = pd.read_sql_query("SELECT project_name AS 'المشروع', drawing_name AS 'الرسم التنفيذي', due_date AS 'تاريخ التسليم', status AS 'الحالة' FROM ProjectDrawings ORDER BY due_date ASC", conn)
+        if not df.empty:
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد رسومات مسجلة بعد.")
+        conn.close()
+
+    elif nav == "👤 لوحتي الشخصية (بصمة وطلبات)":
+        render_employee_dashboard(emp_id, balance)
 
 # ==========================================
 # 6. بوابة مدير القسم (Manager)
@@ -527,7 +557,7 @@ def manager_portal():
             st.session_state['logged_in'] = False
             st.rerun()
 
-    nav = st.radio("القائمة:", ["✅ طلبات القسم", "📝 تقارير العمل اليومية", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["✅ طلبات القسم", "📝 تقارير العمل اليومية", "👤 لوحتي الشخصية (بصمة وطلبات)"], horizontal=True)
     st.divider()
 
     if nav == "✅ طلبات القسم":
@@ -609,7 +639,7 @@ def manager_portal():
             
         conn.close()
         
-    elif nav == "👤 لوحتي الشخصية":
+    elif nav == "👤 لوحتي الشخصية (بصمة وطلبات)":
         render_employee_dashboard(emp_id, balance)
 
 # ==========================================
@@ -699,7 +729,7 @@ def owner_portal():
     conn.close()
 
 # ==========================================
-# 8. بوابة الموظف (Employee)
+# 8. بوابة الموظف (Employee) والشاشة المشتركة للجميع
 # ==========================================
 def employee_portal():
     emp_id = st.session_state['emp_id']
@@ -714,6 +744,7 @@ def employee_portal():
             st.rerun()
     render_employee_dashboard(emp_id, balance)
 
+# دالة لوحة الموظف الأساسية (البصمة، الإجازات، السجلات)
 def render_employee_dashboard(emp_id, balance):
     month, delay_mins, absent_str, overtime_mins = get_employee_stats(emp_id)
     absent_list = [d for d in absent_str.split(",") if d.strip()] if absent_str else []
@@ -733,10 +764,10 @@ def render_employee_dashboard(emp_id, balance):
     
     st.divider()
     
-    nav = st.radio("العمليات:", ["📍 تسجيل حضور وانصراف", "📝 تقديم طلب جديد", "🌴 سجلاتي"], horizontal=True)
+    sub_nav = st.radio("العمليات الشخصية:", ["📍 تسجيل حضور وانصراف", "📝 تقديم طلب جديد", "🌴 سجلاتي"], horizontal=True)
     st.divider()
     
-    if nav == "📍 تسجيل حضور وانصراف":
+    if sub_nav == "📍 تسجيل حضور وانصراف":
         st.subheader("تسجيل الحضور / الانصراف")
         
         locations = conn.execute("SELECT name, lat, lon, radius FROM Locations").fetchall()
@@ -803,7 +834,7 @@ def render_employee_dashboard(emp_id, balance):
             else:
                 st.info("يتم الآن جلب موقعك الجغرافي.. يرجى السماح للمتصفح بمعرفة موقعك (Allow Location).")
 
-    elif nav == "📝 تقديم طلب جديد":
+    elif sub_nav == "📝 تقديم طلب جديد":
         with st.form(f"emp_req_{emp_id}"):
             req_type = st.selectbox("نوع الطلب", ["إجازة اعتيادية", "إجازة عارضة", "عمل من المنزل", "مأمورية", "إذن"])
             req_date = st.date_input("التاريخ")
@@ -813,7 +844,7 @@ def render_employee_dashboard(emp_id, balance):
                 conn.commit()
                 st.success("تم إرسال الطلب!")
                 
-    elif nav == "🌴 سجلاتي":
+    elif sub_nav == "🌴 سجلاتي":
         req_hist = pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=? ORDER BY id DESC", conn, params=(emp_id,))
         if not req_hist.empty: st.dataframe(req_hist, use_container_width=True, hide_index=True)
         else: st.info("لا توجد طلبات.")
