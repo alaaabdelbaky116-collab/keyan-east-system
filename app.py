@@ -8,6 +8,15 @@ from PIL import Image
 import io
 import os
 
+DB_NAME = "hr_system_v6.db"
+
+# محاولة استدعاء مكتبة الـ GPS الجديدة المستقرة
+try:
+    from streamlit_js_eval import get_geolocation
+    GEO_AVAILABLE = True
+except ImportError:
+    GEO_AVAILABLE = False
+
 # ==========================================
 # 1. الإعدادات الأساسية
 # ==========================================
@@ -18,7 +27,16 @@ OFFICIAL_OUT = '18:00'
 GRACE_PERIOD_MINS = 60
 REQUIRED_HOURS = 7
 DEFAULT_ANNUAL_BALANCE = 21
-LOGO_FILE = "image_c5a585.png"
+LOGO_FILE = "logo.png"
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000 
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
 
 def format_hhmm(total_minutes):
     if not total_minutes or pd.isna(total_minutes) or total_minutes <= 0:
@@ -28,16 +46,17 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# 2. حماية وتجهيز قاعدة البيانات (تعمل مرة واحدة فقط)
+# 2. حماية وتجهيز قاعدة البيانات 
 # ==========================================
 def init_db():
-    conn = sqlite3.connect('hr_system.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, role TEXT, emp_id TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS Employees (emp_id TEXT PRIMARY KEY, name TEXT, department TEXT, annual_balance INTEGER)''')
     c.execute('''CREATE TABLE IF NOT EXISTS Permissions (emp_id TEXT, date TEXT, type TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS Requests (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, req_type TEXT, notes TEXT, status TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
+    c.execute('''CREATE TABLE IF NOT EXISTS Locations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, lat REAL, lon REAL, radius REAL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS WebAttendance (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, time TEXT, action TEXT, location_name TEXT, photo TEXT, project_name TEXT, daily_report TEXT)''')
         
     c.execute("SELECT COUNT(*) FROM Users WHERE role='admin'")
@@ -50,13 +69,12 @@ def init_db():
         
     conn.commit(); conn.close()
 
-# 💡 هذه هي الثغرة التي تم سدها لمنع تعليق الموقع
 if 'db_setup_done' not in st.session_state:
     init_db()
     st.session_state['db_setup_done'] = True
 
 def authenticate(username, password):
-    conn = sqlite3.connect('hr_system.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("SELECT role, emp_id FROM Users WHERE username=? AND password=?", (username, password))
     user = c.fetchone()
@@ -64,7 +82,7 @@ def authenticate(username, password):
     return user
 
 def get_employee_info(emp_id):
-    conn = sqlite3.connect('hr_system.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("SELECT name, department, annual_balance FROM Employees WHERE emp_id=?", (emp_id,))
     res = c.fetchone()
@@ -72,13 +90,16 @@ def get_employee_info(emp_id):
     return res if res else ("غير مسجل", "غير محدد", DEFAULT_ANNUAL_BALANCE)
 
 def get_employee_stats(emp_id):
-    conn = sqlite3.connect('hr_system.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("SELECT month, delay_mins, absent_dates, overtime_hours FROM MonthlyStats WHERE emp_id=? ORDER BY month DESC LIMIT 1", (emp_id,))
     res = c.fetchone()
     conn.close()
     return res if res else (None, 0.0, "", 0.0)
 
+# ==========================================
+# 3. محرك تحليل الحضور وإنشاء الحسابات
+# ==========================================
 def process_excel(file):
     try: xls = pd.ExcelFile(file)
     except Exception as e:
@@ -90,7 +111,7 @@ def process_excel(file):
     official_in_dt = datetime.strptime(OFFICIAL_IN, time_in_fmt)
     official_out_dt = datetime.strptime(OFFICIAL_OUT, time_in_fmt)
     required_mins = REQUIRED_HOURS * 60
-    conn = sqlite3.connect('hr_system.db')
+    conn = sqlite3.connect(DB_NAME)
     
     for sheet in xls.sheet_names:
         df = pd.read_excel(xls, sheet_name=sheet)
@@ -102,7 +123,7 @@ def process_excel(file):
                 if val in ['Name', 'الاسم', 'الإسم', 'اسم الموظف', 'Employee Name']:
                     try:
                         name = str(df.iloc[r, c + 1]).strip()
-                        emp_id = str(df.iloc[r + 1, c + 1]).strip()
+                        emp_id = str(df.iloc[r + 1, c + 1]).strip() # سحب الكود
                     except: continue
                     
                     if name.lower() == 'nan' or not name: continue
@@ -112,7 +133,11 @@ def process_excel(file):
                     try: department = str(df.iloc[r, start_col + 1]).strip()
                     except: department = "غير محدد"
                     
+                    # 💡 إنشاء أو تحديث حساب الموظف (الاسم والكود)
                     conn.execute("INSERT OR IGNORE INTO Employees (emp_id, name, department, annual_balance) VALUES (?, ?, ?, ?)", (emp_id, name, department, DEFAULT_ANNUAL_BALANCE))
+                    conn.execute("UPDATE Employees SET name=?, department=? WHERE emp_id=?", (name, department, emp_id))
+                    
+                    # إنشاء بيانات الدخول (اليوزر والباسورد = كود الموظف)
                     conn.execute("INSERT OR IGNORE INTO Users (username, password, role, emp_id) VALUES (?, ?, 'employee', ?)", (emp_id, emp_id, emp_id))
                     conn.commit()
                     
@@ -190,11 +215,12 @@ def login_page():
     with col2:
         try:
             if os.path.exists(LOGO_FILE):
-                img_c1, img_c2, img_c3 = st.columns([1, 1, 1])
-                with img_c2: st.image(LOGO_FILE, width=320)
+                img_c1, img_c2, img_c3 = st.columns([1, 2.5, 1])
+                with img_c2: st.image(LOGO_FILE, use_container_width=True)
         except: pass
         
         st.markdown("<h2 style='text-align: center; color: #172B4D;'>بوابة Keyan-East</h2>", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
         with st.form("login_form"):
             user = st.text_input("اسم المستخدم")
             pwd = st.text_input("كلمة المرور", type="password")
@@ -218,7 +244,7 @@ def admin_portal():
             st.session_state['logged_in'] = False
             st.rerun()
 
-    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات العامة", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 سجل الحضور والتقارير"], horizontal=True)
+    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات العامة", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 إدارة المواقع والفروع", "📌 سجل التقارير والبصمة"], horizontal=True)
     st.divider()
     
     if nav == "📊 تحليل البصمة":
@@ -229,7 +255,7 @@ def admin_portal():
                 try:
                     df = process_excel(uploaded_file)
                     if df is not None and not df.empty:
-                        st.success("تم التحليل بنجاح!")
+                        st.success("تم التحليل بنجاح! تم إنشاء الحسابات باستخدام كود الموظف كاسم مستخدم وكلمة مرور.")
                         st.dataframe(df, use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error("❌ حدث خطأ غير متوقع")
@@ -237,7 +263,7 @@ def admin_portal():
 
     elif nav == "✅ الطلبات العامة":
         st.header("جميع طلبات الموظفين بالشركة")
-        conn = sqlite3.connect('hr_system.db')
+        conn = sqlite3.connect(DB_NAME)
         all_reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, e.department, r.date, r.req_type, r.notes, r.status FROM Requests r LEFT JOIN Employees e ON r.emp_id = e.emp_id ORDER BY r.id DESC LIMIT 50", conn)
         if not all_reqs.empty: st.dataframe(all_reqs, use_container_width=True, hide_index=True)
         else: st.info("لا توجد طلبات مسجلة حالياً.")
@@ -253,7 +279,7 @@ def admin_portal():
             role_choice = c2.selectbox("صلاحيات الحساب", ["موظف عادي (Employee)", "مدير قسم (Manager)", "مسؤول نظام (Admin)", "مالك (Owner)"])
             role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
             if st.form_submit_button("إنشاء الحساب", type="primary"):
-                conn = sqlite3.connect('hr_system.db')
+                conn = sqlite3.connect(DB_NAME)
                 try:
                     conn.execute("INSERT INTO Users VALUES (?, ?, ?, ?)", (new_user, new_pwd, role_map[role_choice], new_emp_id))
                     conn.commit()
@@ -263,7 +289,7 @@ def admin_portal():
 
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
-        conn = sqlite3.connect('hr_system.db')
+        conn = sqlite3.connect(DB_NAME)
         users_df = pd.read_sql_query("SELECT username AS 'اسم المستخدم', password AS 'كلمة المرور', emp_id AS 'كود الموظف', role AS 'الصلاحية الحالية' FROM Users", conn)
         display_map = {"employee": "موظف عادي", "manager": "مدير قسم", "admin": "مسؤول نظام", "owner": "المالك"}
         users_df['الصلاحية الحالية'] = users_df['الصلاحية الحالية'].map(display_map)
@@ -292,12 +318,46 @@ def admin_portal():
                 st.success("تم التحديث!")
         conn.close()
 
-    elif nav == "📍 سجل الحضور والتقارير":
+    elif nav == "📍 إدارة المواقع والفروع":
+        st.header("📍 إضافة فروع ومواقع الشركة (GPS)")
+        conn = sqlite3.connect(DB_NAME)
+        
+        with st.form("add_location_form"):
+            loc_name = st.text_input("اسم الفرع أو الموقع")
+            c1, c2, c3 = st.columns(3)
+            new_lat = c1.number_input("خط العرض (Latitude)", format="%.6f")
+            new_lon = c2.number_input("خط الطول (Longitude)", format="%.6f")
+            new_rad = c3.number_input("النطاق المسموح (بالمتر)", value=50.0, min_value=10.0)
+            if st.form_submit_button("إضافة الموقع", type="primary"):
+                if loc_name.strip() != "":
+                    conn.execute("INSERT INTO Locations (name, lat, lon, radius) VALUES (?, ?, ?, ?)", (loc_name, new_lat, new_lon, new_rad))
+                    conn.commit()
+                    st.success(f"تم إضافة فرع '{loc_name}' بنجاح!")
+                    st.rerun()
+                else: st.error("يرجى كتابة اسم الفرع!")
+        
+        st.divider()
+        st.subheader("الفروع المسجلة")
+        locations_df = pd.read_sql_query("SELECT id, name AS 'اسم الموقع', lat AS 'خط العرض', lon AS 'خط الطول', radius AS 'النطاق (متر)' FROM Locations", conn)
+        if not locations_df.empty:
+            st.dataframe(locations_df.drop(columns=['id']), use_container_width=True)
+            with st.form("delete_loc"):
+                loc_to_delete = st.selectbox("حذف موقع:", locations_df['اسم الموقع'].tolist())
+                if st.form_submit_button("حذف الفرع 🗑️"):
+                    conn.execute("DELETE FROM Locations WHERE name=?", (loc_to_delete,))
+                    conn.commit()
+                    st.success("تم الحذف بنجاح!")
+                    st.rerun()
+        else:
+            st.info("لم يتم تسجيل أي مواقع حتى الآن.")
+        conn.close()
+
+    elif nav == "📌 سجل التقارير والبصمة":
         st.header("سجل حضور المناديب والتقارير")
-        conn = sqlite3.connect('hr_system.db')
+        conn = sqlite3.connect(DB_NAME)
         today_str = datetime.now().strftime("%Y/%m/%d")
         try:
-            web_logs = pd.read_sql_query("SELECT e.name AS 'الاسم', w.time AS 'الوقت', w.action AS 'النوع', w.project_name AS 'المشروع', w.photo AS 'صورة الموظف' FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.date=? ORDER BY w.id DESC", conn, params=(today_str,))
+            web_logs = pd.read_sql_query("SELECT e.name AS 'الاسم', w.location_name AS 'الفرع', w.time AS 'الوقت', w.action AS 'النوع', w.project_name AS 'المشروع', w.photo AS 'صورة الموظف' FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.date=? ORDER BY w.id DESC", conn, params=(today_str,))
             if not web_logs.empty:
                 st.dataframe(web_logs, use_container_width=True, hide_index=True, column_config={"صورة الموظف": st.column_config.ImageColumn("صورة الإثبات")})
             else: st.info("لا توجد سجلات حضور لليوم.")
@@ -325,7 +385,7 @@ def manager_portal():
 
     if nav == "✅ طلبات القسم":
         st.header(f"طلبات الموظفين في قسم: {emp_dept}")
-        conn = sqlite3.connect('hr_system.db')
+        conn = sqlite3.connect(DB_NAME)
         reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, r.date, r.req_type, r.notes FROM Requests r JOIN Employees e ON r.emp_id = e.emp_id WHERE e.department = ? AND r.status = 'قيد الانتظار' AND r.emp_id != ?", conn, params=(emp_dept, emp_id))
         if reqs.empty: st.success("لا توجد طلبات معلقة لفريقك حالياً.")
         else:
@@ -344,7 +404,7 @@ def manager_portal():
         
     elif nav == "📝 تقارير العمل اليومية":
         st.header(f"تقارير الإنجاز اليومية لموظفي قسم: {emp_dept}")
-        conn = sqlite3.connect('hr_system.db')
+        conn = sqlite3.connect(DB_NAME)
         rep_df = pd.read_sql_query("""
             SELECT w.date AS 'التاريخ', e.name AS 'الموظف', w.project_name AS 'المشروع', w.daily_report AS 'ما تم إنجازه' 
             FROM WebAttendance w 
@@ -379,7 +439,7 @@ def owner_portal():
     nav = st.radio("القائمة:", ["📊 متابعة المشاريع (اتحادات)", "👥 ملخص الإنجازات"], horizontal=True)
     st.divider()
 
-    conn = sqlite3.connect('hr_system.db')
+    conn = sqlite3.connect(DB_NAME)
     
     if nav == "📊 متابعة المشاريع (اتحادات)":
         st.subheader("تقارير الإنجاز اليومية حسب المشروع")
@@ -443,7 +503,7 @@ def render_employee_dashboard(emp_id, balance):
     c2.metric("تأخيرات", f"{format_hhmm(delay_mins)} ساعة")
     c3.metric("إضافي", f"{format_hhmm(overtime_mins)} ساعة")
     
-    conn = sqlite3.connect('hr_system.db')
+    conn = sqlite3.connect(DB_NAME)
     pending = conn.execute("SELECT COUNT(*) FROM Requests WHERE emp_id=? AND status='قيد الانتظار'", (emp_id,)).fetchone()[0]
     c4.metric("طلبات معلقة", pending)
     
@@ -458,42 +518,70 @@ def render_employee_dashboard(emp_id, balance):
     if nav == "📍 تسجيل حضور وانصراف":
         st.subheader("تسجيل الحضور / الانصراف")
         
-        camera_photo = st.camera_input("التقط صورة لإثبات الحضور أو الانصراف")
+        locations = conn.execute("SELECT name, lat, lon, radius FROM Locations").fetchall()
         
-        if camera_photo is not None:
-            img = Image.open(camera_photo)
-            img.thumbnail((300, 300))
-            buffered = io.BytesIO()
-            img.save(buffered, format="JPEG", quality=85)
-            photo_uri = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
+        if not locations:
+            st.error("لم يتم تسجيل أي فروع للشركة في النظام بعد.")
+        elif not GEO_AVAILABLE:
+            st.error("مكتبة 'streamlit-js-eval' غير مثبتة.")
+        else:
+            # استخدام المكتبة الجديدة والآمنة لجلب الموقع
+            loc = get_geolocation()
             
-            st.success("تم التقاط الصورة بنجاح! اختر العملية المطلوبة:")
-            
-            if st.button("تسجيل حضور 🟢", use_container_width=True):
-                now_date = datetime.now().strftime("%Y/%m/%d")
-                now_time = datetime.now().strftime("%H:%M")
-                conn.execute("INSERT INTO WebAttendance (emp_id, date, time, action, location_name, photo) VALUES (?, ?, ?, 'حضور', ?, ?)", 
-                             (emp_id, now_date, now_time, "مقر العمل", photo_uri))
-                conn.commit()
-                st.success(f"تم تسجيل الحضور بنجاح الساعة {now_time}")
-            
-            st.markdown("---")
-            st.markdown("### 📝 تسجيل الانصراف والتقرير اليومي")
-            
-            project_choices = [f"اتحاد {i}" for i in range(1, 46)]
-            selected_proj = st.selectbox("المشروع (الاتحاد) الذي عملت عليه اليوم", project_choices)
-            daily_rep = st.text_area("ملخص ما تم إنجازه اليوم", placeholder="اكتب بالتفصيل المهام التي أنجزتها...")
-            
-            if st.button("تسجيل انصراف 🔴", use_container_width=True):
-                if not daily_rep.strip():
-                    st.error("❌ يجب كتابة تقرير بما تم إنجازه اليوم لتتمكن من تسجيل الانصراف!")
+            if loc and isinstance(loc, dict) and 'coords' in loc:
+                emp_lat = float(loc['coords']['latitude'])
+                emp_lon = float(loc['coords']['longitude'])
+                
+                closest_loc_name, min_distance, is_allowed = None, float('inf'), False
+                
+                for l_name, l_lat, l_lon, l_rad in locations:
+                    dist = haversine(l_lat, l_lon, emp_lat, emp_lon)
+                    if dist < min_distance:
+                        min_distance, closest_loc_name = dist, l_name
+                        if dist <= l_rad: is_allowed = True
+                
+                if is_allowed:
+                    st.success(f"✅ أنت داخل نطاق فرع: **{closest_loc_name}**")
+                    camera_photo = st.camera_input("التقط صورة لإثبات الحضور أو الانصراف")
+                    
+                    if camera_photo is not None:
+                        img = Image.open(camera_photo)
+                        img.thumbnail((300, 300))
+                        buffered = io.BytesIO()
+                        img.save(buffered, format="JPEG", quality=85)
+                        photo_uri = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
+                        
+                        st.success("تم التقاط الصورة بنجاح! اختر العملية المطلوبة:")
+                        
+                        if st.button("تسجيل حضور 🟢", use_container_width=True):
+                            now_date = datetime.now().strftime("%Y/%m/%d")
+                            now_time = datetime.now().strftime("%H:%M")
+                            conn.execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (?, ?, ?, 'حضور', ?, ?, ?)", 
+                                         (emp_id, now_date, now_time, int(min_distance), closest_loc_name, photo_uri))
+                            conn.commit()
+                            st.success(f"تم تسجيل الحضور بنجاح الساعة {now_time}")
+                        
+                        st.markdown("---")
+                        st.markdown("### 📝 تسجيل الانصراف والتقرير اليومي")
+                        
+                        project_choices = [f"اتحاد {i}" for i in range(1, 46)]
+                        selected_proj = st.selectbox("المشروع (الاتحاد) الذي عملت عليه اليوم", project_choices)
+                        daily_rep = st.text_area("ملخص ما تم إنجازه اليوم", placeholder="اكتب بالتفصيل المهام التي أنجزتها...")
+                        
+                        if st.button("تسجيل انصراف 🔴", use_container_width=True):
+                            if not daily_rep.strip():
+                                st.error("❌ يجب كتابة تقرير بما تم إنجازه اليوم لتتمكن من تسجيل الانصراف!")
+                            else:
+                                now_date = datetime.now().strftime("%Y/%m/%d")
+                                now_time = datetime.now().strftime("%H:%M")
+                                conn.execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (?, ?, ?, 'انصراف', ?, ?, ?, ?, ?)", 
+                                             (emp_id, now_date, now_time, int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
+                                conn.commit()
+                                st.success(f"تم تسجيل الانصراف وحفظ التقرير بنجاح الساعة {now_time}")
                 else:
-                    now_date = datetime.now().strftime("%Y/%m/%d")
-                    now_time = datetime.now().strftime("%H:%M")
-                    conn.execute("INSERT INTO WebAttendance (emp_id, date, time, action, location_name, photo, project_name, daily_report) VALUES (?, ?, ?, 'انصراف', ?, ?, ?, ?)", 
-                                 (emp_id, now_date, now_time, "مقر العمل", photo_uri, selected_proj, daily_rep))
-                    conn.commit()
-                    st.success(f"تم تسجيل الانصراف وحفظ التقرير بنجاح الساعة {now_time}")
+                    st.error(f"❌ أنت خارج نطاق جميع فروع الشركة. أقرب فرع إليك هو '{closest_loc_name}' ويبعد عنك مسافة {int(min_distance)} متر.")
+            else:
+                st.info("يتم الآن جلب موقعك الجغرافي.. يرجى السماح للمتصفح بمعرفة موقعك (Allow Location).")
 
     elif nav == "📝 تقديم طلب جديد":
         with st.form(f"emp_req_{emp_id}"):
