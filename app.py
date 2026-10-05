@@ -1,25 +1,61 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import sqlite3
 import traceback
 import math
 import base64
 from PIL import Image
 import io
 import os
+import psycopg2
 
-DB_NAME = "hr_system_v11.db" 
+# ==========================================
+# 1. الاتصال بقاعدة البيانات السحابية (Supabase)
+# ==========================================
+try:
+    DB_URL = st.secrets["DB_URL"]
+except:
+    st.error("⚠️ يرجى إضافة رابط قاعدة البيانات (DB_URL) في إعدادات Secrets في منصة Streamlit!")
+    st.stop()
 
+def get_db_connection():
+    return psycopg2.connect(DB_URL)
+
+def db_execute(query, params=()):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def db_fetchone(query, params=()):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    res = cur.fetchone()
+    cur.close()
+    conn.close()
+    return res
+
+def db_fetchall(query, params=()):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    res = cur.fetchall()
+    cur.close()
+    conn.close()
+    return res
+
+# ==========================================
+# 2. الإعدادات الأساسية
+# ==========================================
 try:
     from streamlit_js_eval import get_geolocation
     GEO_AVAILABLE = True
 except ImportError:
     GEO_AVAILABLE = False
 
-# ==========================================
-# 1. الإعدادات الأساسية
-# ==========================================
 st.set_page_config(page_title="Keyan-East HR Portal", page_icon="🏢", layout="wide")
 
 OFFICIAL_IN = '11:00'
@@ -46,64 +82,56 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# 2. حماية وتجهيز قاعدة البيانات 
+# 3. حماية وتجهيز جداول PostgreSQL 
 # ==========================================
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, role TEXT, emp_id TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS Employees (emp_id TEXT PRIMARY KEY, name TEXT, department TEXT, annual_balance INTEGER)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS Permissions (emp_id TEXT, date TEXT, type TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS Requests (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, req_type TEXT, notes TEXT, status TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
-    c.execute('''CREATE TABLE IF NOT EXISTS Locations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, lat REAL, lon REAL, radius REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS WebAttendance (id INTEGER PRIMARY KEY AUTOINCREMENT, emp_id TEXT, date TEXT, time TEXT, action TEXT, distance REAL, location_name TEXT, photo TEXT, project_name TEXT, daily_report TEXT)''')
-    
-    # جداول الحسابات، التراخيص، والرسومات الهندسية
-    c.execute('''CREATE TABLE IF NOT EXISTS ProjectFinancials (id INTEGER PRIMARY KEY AUTOINCREMENT, project_name TEXT, installment_type TEXT, amount REAL, due_date TEXT, status TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id INTEGER PRIMARY KEY AUTOINCREMENT, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id INTEGER PRIMARY KEY AUTOINCREMENT, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cur = conn.cursor()
         
-    c.execute("SELECT COUNT(*) FROM Users WHERE role='admin'")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('admin', 'admin123', 'admin', '0')")
+        cur.execute('''CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, role TEXT, emp_id TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Employees (emp_id TEXT PRIMARY KEY, name TEXT, department TEXT, annual_balance INTEGER)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Permissions (emp_id TEXT, date TEXT, type TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Requests (id SERIAL PRIMARY KEY, emp_id TEXT, date TEXT, req_type TEXT, notes TEXT, status TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Locations (id SERIAL PRIMARY KEY, name TEXT, lat REAL, lon REAL, radius REAL)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS WebAttendance (id SERIAL PRIMARY KEY, emp_id TEXT, date TEXT, time TEXT, action TEXT, distance REAL, location_name TEXT, photo TEXT, project_name TEXT, daily_report TEXT)''')
         
-    c.execute("SELECT COUNT(*) FROM Users WHERE role='owner'")
-    if c.fetchone()[0] == 0:
-        c.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('owner', 'owner123', 'owner', 'owner')")
-        
-    conn.commit(); conn.close()
+        cur.execute('''CREATE TABLE IF NOT EXISTS ProjectFinancials (id SERIAL PRIMARY KEY, project_name TEXT, installment_type TEXT, amount REAL, due_date TEXT, status TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id SERIAL PRIMARY KEY, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
+            
+        cur.execute("SELECT COUNT(*) FROM Users WHERE role='admin'")
+        if cur.fetchone()[0] == 0:
+            cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('admin', 'admin123', 'admin', '0') ON CONFLICT (username) DO NOTHING")
+            
+        cur.execute("SELECT COUNT(*) FROM Users WHERE role='owner'")
+        if cur.fetchone()[0] == 0:
+            cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('owner', 'owner123', 'owner', 'owner') ON CONFLICT (username) DO NOTHING")
+            
+        cur.close()
+        conn.close()
+    except Exception as e:
+        st.error(f"خطأ في تهيئة قاعدة البيانات: {e}")
 
 if 'db_setup_done' not in st.session_state:
     init_db()
     st.session_state['db_setup_done'] = True
 
 def authenticate(username, password):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT role, emp_id FROM Users WHERE username=? AND password=?", (username, password))
-    user = c.fetchone()
-    conn.close()
-    return user
+    return db_fetchone("SELECT role, emp_id FROM Users WHERE username=%s AND password=%s", (username, password))
 
 def get_employee_info(emp_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT name, department, annual_balance FROM Employees WHERE emp_id=?", (emp_id,))
-    res = c.fetchone()
-    conn.close()
+    res = db_fetchone("SELECT name, department, annual_balance FROM Employees WHERE emp_id=%s", (emp_id,))
     return res if res else ("غير مسجل", "غير محدد", DEFAULT_ANNUAL_BALANCE)
 
 def get_employee_stats(emp_id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("SELECT month, delay_mins, absent_dates, overtime_hours FROM MonthlyStats WHERE emp_id=? ORDER BY month DESC LIMIT 1", (emp_id,))
-    res = c.fetchone()
-    conn.close()
+    res = db_fetchone("SELECT month, delay_mins, absent_dates, overtime_hours FROM MonthlyStats WHERE emp_id=%s ORDER BY month DESC LIMIT 1", (emp_id,))
     return res if res else (None, 0.0, "", 0.0)
 
 # ==========================================
-# 3. محرك تحليل الحضور وإنشاء الحسابات
+# 4. محرك تحليل الحضور
 # ==========================================
 def process_excel(file):
     try: xls = pd.ExcelFile(file)
@@ -116,7 +144,9 @@ def process_excel(file):
     official_in_dt = datetime.strptime(OFFICIAL_IN, time_in_fmt)
     official_out_dt = datetime.strptime(OFFICIAL_OUT, time_in_fmt)
     required_mins = REQUIRED_HOURS * 60
-    conn = sqlite3.connect(DB_NAME)
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
     
     for sheet in xls.sheet_names:
         df = pd.read_excel(xls, sheet_name=sheet)
@@ -138,10 +168,8 @@ def process_excel(file):
                     try: department = str(df.iloc[r, start_col + 1]).strip()
                     except: department = "غير محدد"
                     
-                    conn.execute("INSERT OR IGNORE INTO Employees (emp_id, name, department, annual_balance) VALUES (?, ?, ?, ?)", (emp_id, name, department, DEFAULT_ANNUAL_BALANCE))
-                    conn.execute("UPDATE Employees SET name=?, department=? WHERE emp_id=?", (name, department, emp_id))
-                    
-                    conn.execute("INSERT OR IGNORE INTO Users (username, password, role, emp_id) VALUES (?, ?, 'employee', ?)", (emp_id, emp_id, emp_id))
+                    cur.execute("INSERT INTO Employees (emp_id, name, department, annual_balance) VALUES (%s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department", (emp_id, name, department, DEFAULT_ANNUAL_BALANCE))
+                    cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES (%s, %s, 'employee', %s) ON CONFLICT (username) DO NOTHING", (emp_id, emp_id, emp_id))
                     conn.commit()
                     
                     try: year_month = str(df.iloc[r + 1, start_col + 1]).strip().split('-')[0][:7] 
@@ -150,8 +178,7 @@ def process_excel(file):
                     daily_data = df.iloc[r + 9: r + 40, start_col:start_col+5] 
                     total_worked_mins, regular_days, total_shortage_mins, total_overtime_mins, absent_dates = 0, 0, 0, 0, []
                     
-                    cur = conn.cursor()
-                    cur.execute("SELECT date FROM Permissions WHERE emp_id=?", (emp_id,))
+                    cur.execute("SELECT date FROM Permissions WHERE emp_id=%s", (emp_id,))
                     emp_perms = [row[0] for row in cur.fetchall()]
                     
                     for _, row in daily_data.iterrows():
@@ -194,8 +221,7 @@ def process_excel(file):
                             except: pass
                                 
                     absent_str = ",".join(absent_dates)
-                    conn.execute("INSERT OR REPLACE INTO MonthlyStats (emp_id, month, delay_mins, absent_dates, overtime_hours) VALUES (?, ?, ?, ?, ?)", 
-                                 (emp_id, year_month, total_shortage_mins, absent_str, total_overtime_mins))
+                    cur.execute("INSERT INTO MonthlyStats (emp_id, month, delay_mins, absent_dates, overtime_hours) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (emp_id, month) DO UPDATE SET delay_mins=EXCLUDED.delay_mins, absent_dates=EXCLUDED.absent_dates, overtime_hours=EXCLUDED.overtime_hours", (emp_id, year_month, total_shortage_mins, absent_str, total_overtime_mins))
                     conn.commit()
 
                     extracted_data.append({
@@ -204,11 +230,12 @@ def process_excel(file):
                         'إضافي': format_hhmm(total_overtime_mins), 'عجز وتأخير': format_hhmm(total_shortage_mins),
                         'غياب صريح': len(absent_dates)
                     })
+    cur.close()
     conn.close()
     return pd.DataFrame(extracted_data)
 
 # ==========================================
-# 4. واجهة تسجيل الدخول
+# 5. واجهة تسجيل الدخول
 # ==========================================
 if 'logged_in' not in st.session_state:
     st.session_state.update({'logged_in': False, 'role': None, 'emp_id': None, 'username': None})
@@ -235,7 +262,7 @@ def login_page():
                 else: st.error("بيانات الدخول غير صحيحة!")
 
 # ==========================================
-# 5. بوابة الإدارة (Admin)
+# 6. بوابة الإدارة (Admin)
 # ==========================================
 def admin_portal():
     with st.sidebar:
@@ -247,19 +274,18 @@ def admin_portal():
             st.session_state['logged_in'] = False
             st.rerun()
 
-    # تمت إضافة تبويب النسخ الاحتياطي هنا!
-    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات العامة", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 إدارة المواقع والفروع", "📌 سجل التقارير والبصمة", "💾 النسخ الاحتياطي"], horizontal=True)
+    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات العامة", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 إدارة المواقع", "📌 التقارير"], horizontal=True)
     st.divider()
     
     if nav == "📊 تحليل البصمة":
         st.header("تحليل ملف الحضور والانصراف")
         uploaded_file = st.file_uploader("ارفع شيت البصمة (Excel)", type=['xls', 'xlsx'])
         if uploaded_file and st.button("بدء التحليل", type="primary"):
-            with st.spinner("جاري المطابقة وإنشاء الحسابات..."):
+            with st.spinner("جاري المطابقة..."):
                 try:
                     df = process_excel(uploaded_file)
                     if df is not None and not df.empty:
-                        st.success("تم التحليل بنجاح! تم إنشاء الحسابات باستخدام كود الموظف كاسم مستخدم وكلمة مرور.")
+                        st.success("تم التحليل بنجاح!")
                         st.dataframe(df, use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error("❌ حدث خطأ غير متوقع")
@@ -267,11 +293,11 @@ def admin_portal():
 
     elif nav == "✅ الطلبات العامة":
         st.header("جميع طلبات الموظفين بالشركة")
-        conn = sqlite3.connect(DB_NAME)
+        conn = get_db_connection()
         all_reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, e.department, r.date, r.req_type, r.notes, r.status FROM Requests r LEFT JOIN Employees e ON r.emp_id = e.emp_id ORDER BY r.id DESC LIMIT 50", conn)
+        conn.close()
         if not all_reqs.empty: st.dataframe(all_reqs, use_container_width=True, hide_index=True)
         else: st.info("لا توجد طلبات مسجلة حالياً.")
-        conn.close()
 
     elif nav == "➕ إنشاء حساب":
         st.header("إضافة حساب يدوياً")
@@ -285,18 +311,17 @@ def admin_portal():
             role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
             
             if st.form_submit_button("إنشاء الحساب", type="primary"):
-                conn = sqlite3.connect(DB_NAME)
                 try:
-                    conn.execute("INSERT INTO Users VALUES (?, ?, ?, ?)", (new_user, new_pwd, role_map[role_choice], new_emp_id))
-                    conn.commit()
+                    db_execute("INSERT INTO Users VALUES (%s, %s, %s, %s)", (new_user, new_pwd, role_map[role_choice], new_emp_id))
                     st.success("تم الإضافة بنجاح!")
-                except: st.error("اسم المستخدم موجود مسبقاً!")
-                conn.close()
+                except Exception as e:
+                    st.error("اسم المستخدم موجود مسبقاً!")
 
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
-        conn = sqlite3.connect(DB_NAME)
+        conn = get_db_connection()
         users_df = pd.read_sql_query("SELECT username AS 'اسم المستخدم', password AS 'كلمة المرور', emp_id AS 'كود الموظف', role AS 'الصلاحية الحالية' FROM Users", conn)
+        conn.close()
         display_map = {"employee": "موظف عادي", "manager": "مدير قسم", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
         users_df['الصلاحية الحالية'] = users_df['الصلاحية الحالية'].map(display_map)
         st.dataframe(users_df, use_container_width=True, hide_index=True)
@@ -311,59 +336,21 @@ def admin_portal():
             if st.form_submit_button("تحديث البيانات", type="primary"):
                 role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
                 final_username = new_username.strip() if new_username.strip() else selected_user
-                updates, params = ["role=?"], [role_map[new_role_choice]]
+                updates, params = ["role=%s"], [role_map[new_role_choice]]
                 if final_username != selected_user:
-                    updates.append("username=?")
+                    updates.append("username=%s")
                     params.append(final_username)
                 if new_pwd.strip():
-                    updates.append("password=?")
+                    updates.append("password=%s")
                     params.append(new_pwd.strip())
                 params.append(selected_user)
-                conn.execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=?", params)
-                conn.commit()
+                db_execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=%s", tuple(params))
                 st.success("تم التحديث!")
-        conn.close()
 
-    # ==================================================
-    # شاشة النسخ الاحتياطي واسترجاع البيانات (الجديدة)
-    # ==================================================
-    elif nav == "💾 النسخ الاحتياطي":
-        st.header("💾 حماية واسترجاع قاعدة البيانات")
-        st.info("⚠️ السيرفر المجاني قد يمسح البيانات عند إعادة التشغيل. حمل نسختك يومياً من هنا، وإذا تم مسح البيانات، قم برفع الملف هنا لاسترجاعها بالكامل.")
-        
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            st.subheader("1. حفظ البيانات (تحميل)")
-            if os.path.exists(DB_NAME):
-                with open(DB_NAME, "rb") as file:
-                    st.download_button(
-                        label="📥 تحميل نسخة قاعدة البيانات الآن (.db)",
-                        data=file,
-                        file_name=f"HR_Backup_{datetime.now().strftime('%Y%m%d')}.db",
-                        mime="application/octet-stream",
-                        use_container_width=True
-                    )
-            else:
-                st.warning("لم يتم إنشاء قاعدة بيانات بعد.")
-                
-        with c2:
-            st.subheader("2. استرجاع البيانات (رفع)")
-            uploaded_db = st.file_uploader("ارفع ملف النسخة الاحتياطية (.db)", type=['db', 'octet-stream'])
-            if uploaded_db is not None:
-                if st.button("🔄 استرجاع البيانات", type="primary", use_container_width=True):
-                    with open(DB_NAME, "wb") as f:
-                        f.write(uploaded_db.getbuffer())
-                    st.success("✅ تم استرجاع البيانات بنجاح! يتم الآن تنشيط النظام...")
-                    st.rerun()
-
-    elif nav == "📍 إدارة المواقع والفروع":
-        st.header("📍 إضافة فروع ومواقع الشركة (GPS)")
-        conn = sqlite3.connect(DB_NAME)
-        
-        st.markdown("### 🔍 تحديد موقعي الحالي كفرع للشركة")
+    elif nav == "📍 إدارة المواقع":
+        st.header("📍 إضافة فروع ومواقع الشركة")
         if not GEO_AVAILABLE:
-            st.error("مكتبة 'streamlit-js-eval' غير مثبتة. يرجى إضافتها لملف requirements.txt")
+            st.error("مكتبة 'streamlit-js-eval' غير مثبتة.")
             admin_lat, admin_lon = 0.0, 0.0
         else:
             loc_admin = get_geolocation()
@@ -372,11 +359,9 @@ def admin_portal():
                 admin_lat = float(loc_admin['coords']['latitude'])
                 admin_lon = float(loc_admin['coords']['longitude'])
                 st.success(f"تم التقاط موقعك بنجاح! خط العرض: {admin_lat:.6f} | خط الطول: {admin_lon:.6f}")
-            else:
-                st.info("جاري جلب موقعك الحالي... يرجى السماح للمتصفح بالوصول للموقع (Allow Location).")
         
         with st.form("add_location_form"):
-            loc_name = st.text_input("اسم الفرع أو الموقع (مثال: مقر التجمع الخامس)")
+            loc_name = st.text_input("اسم الفرع أو الموقع")
             c1, c2, c3 = st.columns(3)
             new_lat = c1.number_input("خط العرض (Latitude)", value=admin_lat, format="%.6f")
             new_lon = c2.number_input("خط الطول (Longitude)", value=admin_lon, format="%.6f")
@@ -384,200 +369,43 @@ def admin_portal():
             
             if st.form_submit_button("إضافة الموقع", type="primary"):
                 if loc_name.strip() != "":
-                    conn.execute("INSERT INTO Locations (name, lat, lon, radius) VALUES (?, ?, ?, ?)", (loc_name, new_lat, new_lon, new_rad))
-                    conn.commit()
-                    st.success(f"تم إضافة فرع '{loc_name}' بنجاح!")
+                    db_execute("INSERT INTO Locations (name, lat, lon, radius) VALUES (%s, %s, %s, %s)", (loc_name, new_lat, new_lon, new_rad))
+                    st.success("تم إضافة الفرع!")
                     st.rerun()
                 else: st.error("يرجى كتابة اسم الفرع!")
         
         st.divider()
         st.subheader("الفروع المسجلة")
+        conn = get_db_connection()
         locations_df = pd.read_sql_query("SELECT id, name AS 'اسم الموقع', lat AS 'خط العرض', lon AS 'خط الطول', radius AS 'النطاق (متر)' FROM Locations", conn)
+        conn.close()
         if not locations_df.empty:
             st.dataframe(locations_df.drop(columns=['id']), use_container_width=True)
             with st.form("delete_loc"):
                 loc_to_delete = st.selectbox("حذف موقع:", locations_df['اسم الموقع'].tolist())
                 if st.form_submit_button("حذف الفرع 🗑️"):
-                    conn.execute("DELETE FROM Locations WHERE name=?", (loc_to_delete,))
-                    conn.commit()
+                    db_execute("DELETE FROM Locations WHERE name=%s", (loc_to_delete,))
                     st.success("تم الحذف بنجاح!")
                     st.rerun()
         else:
             st.info("لم يتم تسجيل أي مواقع حتى الآن.")
-        conn.close()
 
-    elif nav == "📌 سجل التقارير والبصمة":
+    elif nav == "📌 التقارير":
         st.header("سجل حضور المناديب والتقارير")
-        conn = sqlite3.connect(DB_NAME)
+        conn = get_db_connection()
         today_str = datetime.now().strftime("%Y/%m/%d")
         try:
-            web_logs = pd.read_sql_query("SELECT e.name AS 'الاسم', w.location_name AS 'الفرع', w.time AS 'الوقت', w.action AS 'النوع', w.project_name AS 'المشروع', w.photo AS 'صورة الموظف' FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.date=? ORDER BY w.id DESC", conn, params=(today_str,))
+            web_logs = pd.read_sql_query("SELECT e.name AS 'الاسم', w.location_name AS 'الفرع', w.time AS 'الوقت', w.action AS 'النوع', w.project_name AS 'المشروع', w.photo AS 'صورة الموظف' FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.date=%s ORDER BY w.id DESC", conn, params=(today_str,))
             if not web_logs.empty:
                 st.dataframe(web_logs, use_container_width=True, hide_index=True, column_config={"صورة الموظف": st.column_config.ImageColumn("صورة الإثبات")})
             else: st.info("لا توجد سجلات حضور لليوم.")
         except Exception as e:
             st.info("لا توجد سجلات حضور بالصور حتى الآن.")
-        conn.close()
+        finally:
+            conn.close()
 
 # ==========================================
-# بوابة قسم الحسابات (Accountant)
-# ==========================================
-def accountant_portal():
-    emp_id = st.session_state['emp_id']
-    emp_name, emp_dept, balance = get_employee_info(emp_id)
-    
-    with st.sidebar:
-        try:
-            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
-        except: pass
-        st.info(f"مرحباً: {st.session_state['username']} (قسم الحسابات)")
-        if st.button("تسجيل الخروج", use_container_width=True):
-            st.session_state['logged_in'] = False
-            st.rerun()
-
-    nav = st.radio("القائمة الرئيسية:", ["💰 إدارة الحسابات والأقساط", "👤 لوحتي الشخصية (بصمة وطلبات)"], horizontal=True)
-    st.divider()
-
-    if nav == "💰 إدارة الحسابات والأقساط":
-        st.title("💰 إدارة الحسابات والأقساط للمشاريع")
-        project_list = [f"اتحاد {i}" for i in range(1, 46)]
-        
-        with st.form("add_financials"):
-            c1, c2 = st.columns(2)
-            proj = c1.selectbox("المشروع (الاتحاد)", project_list)
-            inst_type = c2.selectbox("نوع القسط", ["قسط تنفيذ", "قسط جهاز", "أخرى"])
-            amount = c1.number_input("المبلغ المطلوب", min_value=0.0, step=100.0)
-            due_date = c2.date_input("تاريخ الاستحقاق")
-            status = st.selectbox("حالة الدفع", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"])
-            
-            if st.form_submit_button("تسجيل القسط", type="primary"):
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("INSERT INTO ProjectFinancials (project_name, installment_type, amount, due_date, status) VALUES (?, ?, ?, ?, ?)",
-                             (proj, inst_type, amount, due_date.strftime("%Y/%m/%d"), status))
-                conn.commit(); conn.close()
-                st.success("تم تسجيل القسط بنجاح!")
-                
-        st.divider()
-        st.subheader("الأقساط المسجلة")
-        conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query("SELECT project_name AS 'المشروع', installment_type AS 'نوع القسط', amount AS 'المبلغ', due_date AS 'تاريخ الاستحقاق', status AS 'الحالة' FROM ProjectFinancials ORDER BY due_date DESC", conn)
-        if not df.empty:
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد أقساط مسجلة بعد.")
-        conn.close()
-
-    elif nav == "👤 لوحتي الشخصية (بصمة وطلبات)":
-        render_employee_dashboard(emp_id, balance)
-
-# ==========================================
-# بوابة قسم التراخيص (Licensing)
-# ==========================================
-def licensing_portal():
-    emp_id = st.session_state['emp_id']
-    emp_name, emp_dept, balance = get_employee_info(emp_id)
-
-    with st.sidebar:
-        try:
-            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
-        except: pass
-        st.info(f"مرحباً: {st.session_state['username']} (قسم التراخيص)")
-        if st.button("تسجيل الخروج", use_container_width=True):
-            st.session_state['logged_in'] = False
-            st.rerun()
-
-    nav = st.radio("القائمة الرئيسية:", ["📜 إدارة التراخيص", "👤 لوحتي الشخصية (بصمة وطلبات)"], horizontal=True)
-    st.divider()
-
-    if nav == "📜 إدارة التراخيص":
-        st.title("📜 إدارة تراخيص المشاريع")
-        project_list = [f"اتحاد {i}" for i in range(1, 46)]
-        
-        with st.form("add_license"):
-            c1, c2 = st.columns(2)
-            proj = c1.selectbox("المشروع (الاتحاد)", project_list)
-            lic_name = c2.text_input("اسم الترخيص (مثال: تصريح حفر، رخصة بناء)")
-            due_date = c1.date_input("تاريخ الانتهاء / التجديد")
-            status = c2.selectbox("حالة الترخيص", ["سارية", "تحت الإجراء", "منتهية"])
-            
-            if st.form_submit_button("تسجيل الترخيص", type="primary"):
-                if lic_name.strip():
-                    conn = sqlite3.connect(DB_NAME)
-                    conn.execute("INSERT INTO ProjectLicenses (project_name, license_name, due_date, status) VALUES (?, ?, ?, ?)",
-                                 (proj, lic_name, due_date.strftime("%Y/%m/%d"), status))
-                    conn.commit(); conn.close()
-                    st.success("تم تسجيل الترخيص بنجاح!")
-                else:
-                    st.error("يرجى كتابة اسم الترخيص.")
-                    
-        st.divider()
-        st.subheader("التراخيص المسجلة")
-        conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query("SELECT project_name AS 'المشروع', license_name AS 'الترخيص', due_date AS 'تاريخ الانتهاء', status AS 'الحالة' FROM ProjectLicenses ORDER BY due_date ASC", conn)
-        if not df.empty:
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد تراخيص مسجلة بعد.")
-        conn.close()
-
-    elif nav == "👤 لوحتي الشخصية (بصمة وطلبات)":
-        render_employee_dashboard(emp_id, balance)
-
-# ==========================================
-# بوابة المهندسين (Engineer) للرسومات التنفيذية
-# ==========================================
-def engineer_portal():
-    emp_id = st.session_state['emp_id']
-    emp_name, emp_dept, balance = get_employee_info(emp_id)
-
-    with st.sidebar:
-        try:
-            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
-        except: pass
-        st.info(f"مرحباً: {st.session_state['username']} (القسم الهندسي)")
-        if st.button("تسجيل الخروج", use_container_width=True):
-            st.session_state['logged_in'] = False
-            st.rerun()
-
-    nav = st.radio("القائمة الرئيسية:", ["📐 إدارة الرسومات التنفيذية", "👤 لوحتي الشخصية (بصمة وطلبات)"], horizontal=True)
-    st.divider()
-
-    if nav == "📐 إدارة الرسومات التنفيذية":
-        st.title("📐 إدارة الرسومات التنفيذية (Shop/As-Built)")
-        project_list = [f"اتحاد {i}" for i in range(1, 46)]
-        
-        with st.form("add_drawing"):
-            c1, c2 = st.columns(2)
-            proj = c1.selectbox("المشروع (الاتحاد)", project_list)
-            draw_name = c2.text_input("اسم/نوع الرسم (مثال: إنشائي، معماري، حصر)")
-            due_date = c1.date_input("تاريخ التسليم المستهدف")
-            status = c2.selectbox("حالة الرسم", ["قيد التنفيذ", "تحت المراجعة", "تعديل", "مكتملة"])
-            
-            if st.form_submit_button("تسجيل الرسم التنفيذي", type="primary"):
-                if draw_name.strip():
-                    conn = sqlite3.connect(DB_NAME)
-                    conn.execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status) VALUES (?, ?, ?, ?)",
-                                 (proj, draw_name, due_date.strftime("%Y/%m/%d"), status))
-                    conn.commit(); conn.close()
-                    st.success("تم تسجيل الرسم بنجاح!")
-                else:
-                    st.error("يرجى كتابة اسم الرسم.")
-                    
-        st.divider()
-        st.subheader("الرسومات المسجلة")
-        conn = sqlite3.connect(DB_NAME)
-        df = pd.read_sql_query("SELECT project_name AS 'المشروع', drawing_name AS 'الرسم التنفيذي', due_date AS 'تاريخ التسليم', status AS 'الحالة' FROM ProjectDrawings ORDER BY due_date ASC", conn)
-        if not df.empty:
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد رسومات مسجلة بعد.")
-        conn.close()
-
-    elif nav == "👤 لوحتي الشخصية (بصمة وطلبات)":
-        render_employee_dashboard(emp_id, balance)
-
-# ==========================================
-# 6. بوابة مدير القسم (Manager)
+# 7. بوابة مدير القسم (Manager)
 # ==========================================
 def manager_portal():
     emp_id = st.session_state['emp_id']
@@ -591,13 +419,14 @@ def manager_portal():
             st.session_state['logged_in'] = False
             st.rerun()
 
-    nav = st.radio("القائمة:", ["✅ طلبات القسم", "📝 تقارير العمل اليومية", "👤 لوحتي الشخصية (بصمة وطلبات)"], horizontal=True)
+    nav = st.radio("القائمة:", ["✅ طلبات القسم", "📝 تقارير العمل اليومية", "👤 لوحتي الشخصية"], horizontal=True)
     st.divider()
 
     if nav == "✅ طلبات القسم":
         st.header(f"طلبات الموظفين في قسم: {emp_dept}")
-        conn = sqlite3.connect(DB_NAME)
-        reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, r.date, r.req_type, r.notes FROM Requests r JOIN Employees e ON r.emp_id = e.emp_id WHERE e.department = ? AND r.status = 'قيد الانتظار' AND r.emp_id != ?", conn, params=(emp_dept, emp_id))
+        conn = get_db_connection()
+        reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, r.date, r.req_type, r.notes FROM Requests r JOIN Employees e ON r.emp_id = e.emp_id WHERE e.department = %s AND r.status = 'قيد الانتظار' AND r.emp_id != %s", conn, params=(emp_dept, emp_id))
+        conn.close()
         if reqs.empty: st.success("لا توجد طلبات معلقة لفريقك حالياً.")
         else:
             for _, row in reqs.iterrows():
@@ -605,22 +434,20 @@ def manager_portal():
                     st.write(f"الملاحظات: {row['notes']}")
                     c1, c2 = st.columns(2)
                     if c1.button("موافقة", key=f"app_{row['id']}", type="primary"):
-                        conn.execute("UPDATE Requests SET status='مقبول' WHERE id=?", (row['id'],))
-                        conn.execute("INSERT INTO Permissions VALUES (?, ?, ?)", (row['emp_id'], row['date'], row['req_type']))
-                        conn.commit(); st.rerun()
+                        db_execute("UPDATE Requests SET status='مقبول' WHERE id=%s", (row['id'],))
+                        db_execute("INSERT INTO Permissions VALUES (%s, %s, %s)", (row['emp_id'], row['date'], row['req_type']))
+                        st.rerun()
                     if c2.button("رفض", key=f"rej_{row['id']}"):
-                        conn.execute("UPDATE Requests SET status='مرفوض' WHERE id=?", (row['id'],))
-                        conn.commit(); st.rerun()
-        conn.close()
+                        db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],))
+                        st.rerun()
         
     elif nav == "📝 تقارير العمل اليومية":
         st.header(f"تقارير الإنجاز لموظفي قسم: {emp_dept}")
-        conn = sqlite3.connect(DB_NAME)
         
-        emps = conn.execute("SELECT name FROM Employees WHERE department=?", (emp_dept,)).fetchall()
+        emps = db_fetchall("SELECT name FROM Employees WHERE department=%s", (emp_dept,))
         emp_list = ["الكل"] + [e[0] for e in emps]
         
-        months = conn.execute("SELECT DISTINCT substr(date, 1, 7) FROM WebAttendance WHERE action='انصراف'").fetchall()
+        months = db_fetchall("SELECT DISTINCT substring(date from 1 for 7) FROM WebAttendance WHERE action='انصراف'")
         month_list = ["الكل"] + [m[0] for m in months if m[0]]
         
         st.write("📌 **أدوات الفلترة والبحث:**")
@@ -638,255 +465,221 @@ def manager_portal():
             SELECT w.date AS 'التاريخ', e.name AS 'الموظف', w.project_name AS 'المشروع', w.daily_report AS 'ما تم إنجازه' 
             FROM WebAttendance w 
             JOIN Employees e ON w.emp_id = e.emp_id 
-            WHERE e.department = ? AND w.action = 'انصراف' AND w.daily_report IS NOT NULL
+            WHERE e.department = %s AND w.action = 'انصراف' AND w.daily_report IS NOT NULL
         """
         params = [emp_dept]
         
         if selected_emp != "الكل":
-            query += " AND e.name = ?"
+            query += " AND e.name = %s"
             params.append(selected_emp)
             
         if filter_type == "شهر محدد" and selected_month != "الكل":
-            query += " AND w.date LIKE ?"
+            query += " AND w.date LIKE %s"
             params.append(selected_month + "%")
         elif filter_type == "يوم محدد" and selected_day:
-            query += " AND w.date = ?"
+            query += " AND w.date = %s"
             params.append(selected_day.strftime("%Y/%m/%d"))
             
         query += " ORDER BY w.date DESC, w.id DESC"
         
-        rep_df = pd.read_sql_query(query, conn, params=params)
+        conn = get_db_connection()
+        rep_df = pd.read_sql_query(query, conn, params=tuple(params))
+        conn.close()
         
         if not rep_df.empty:
             st.success(f"✅ تم العثور على {len(rep_df)} تقرير.")
             st.dataframe(rep_df, use_container_width=True, hide_index=True)
             csv = rep_df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                label="📥 تحميل وطباعة التقرير (Excel/CSV)",
-                data=csv,
-                file_name=f"Team_Reports_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime='text/csv',
-                use_container_width=True
-            )
+            st.download_button(label="📥 تحميل وطباعة التقرير (Excel/CSV)", data=csv, file_name=f"Team_Reports.csv", mime='text/csv')
         else:
             st.info("لا توجد تقارير إنجاز تطابق خيارات البحث.")
-            
-        conn.close()
         
-    elif nav == "👤 لوحتي الشخصية (بصمة وطلبات)":
+    elif nav == "👤 لوحتي الشخصية":
         render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# 7. بوابة الأونر / المالك
+# بوابات المالك، الحسابات، التراخيص، والمهندس
 # ==========================================
 def owner_portal():
     with st.sidebar:
-        try:
-            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
-        except: pass
         st.success(f"مرحباً بك: {st.session_state['username']} (المالك)")
         if st.button("تسجيل الخروج", use_container_width=True):
-            st.session_state['logged_in'] = False
-            st.rerun()
+            st.session_state['logged_in'] = False; st.rerun()
 
     st.title("👑 لوحة تحكم المالك")
     nav = st.radio("القائمة:", ["📊 تقارير المهام", "📈 الموقف المالي والهندسي والقانوني", "👥 ملخص الإنجازات"], horizontal=True)
     st.divider()
 
-    conn = sqlite3.connect(DB_NAME)
-    
+    conn = get_db_connection()
     if nav == "📊 تقارير المهام":
-        st.subheader("تقارير الإنجاز اليومية حسب المشروع")
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع لعرض المهام:", project_list)
-        
-        reports = pd.read_sql_query("""
-            SELECT w.date AS 'التاريخ', e.name AS 'الموظف', e.department AS 'القسم', w.daily_report AS 'ما تم إنجازه'
-            FROM WebAttendance w
-            JOIN Employees e ON w.emp_id = e.emp_id
-            WHERE w.project_name = ? AND w.action = 'انصراف'
-            ORDER BY w.id DESC
-        """, conn, params=(selected_project,))
-        
-        if not reports.empty:
-            st.success(f"تم العثور على {len(reports)} تقرير لمشروع '{selected_project}'")
-            st.dataframe(reports, use_container_width=True, hide_index=True)
-        else:
-            st.info("لم يتم تسجيل أي إنجازات في هذا المشروع حتى الآن.")
+        reports = pd.read_sql_query("SELECT w.date AS 'التاريخ', e.name AS 'الموظف', e.department AS 'القسم', w.daily_report AS 'ما تم إنجازه' FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.project_name = %s AND w.action = 'انصراف' ORDER BY w.id DESC", conn, params=(selected_project,))
+        if not reports.empty: st.dataframe(reports, use_container_width=True, hide_index=True)
+        else: st.info("لا يوجد.")
             
     elif nav == "📈 الموقف المالي والهندسي والقانوني":
-        st.subheader("موقف المشروع (أقساط / رسومات هندسية / تراخيص)")
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع:", project_list)
-        
         c1, c2, c3 = st.columns(3)
-        
         with c1:
-            st.markdown("### 💰 الأقساط والمطالبات")
-            fin_df = pd.read_sql_query("SELECT installment_type AS 'النوع', amount AS 'المبلغ', due_date AS 'تاريخ الاستحقاق', status AS 'الحالة' FROM ProjectFinancials WHERE project_name = ? ORDER BY due_date ASC", conn, params=(selected_project,))
-            if not fin_df.empty:
-                st.dataframe(fin_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("لا توجد أقساط مسجلة.")
-                
+            st.markdown("### 💰 الأقساط")
+            fin_df = pd.read_sql_query("SELECT installment_type AS 'النوع', amount AS 'المبلغ', due_date AS 'تاريخ الاستحقاق', status AS 'الحالة' FROM ProjectFinancials WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
+            st.dataframe(fin_df, use_container_width=True, hide_index=True) if not fin_df.empty else st.info("لا يوجد")
         with c2:
-            st.markdown("### 📜 التراخيص والتصاريح")
-            lic_df = pd.read_sql_query("SELECT license_name AS 'الترخيص', due_date AS 'الانتهاء', status AS 'الحالة' FROM ProjectLicenses WHERE project_name = ? ORDER BY due_date ASC", conn, params=(selected_project,))
-            if not lic_df.empty:
-                st.dataframe(lic_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("لا توجد تراخيص مسجلة.")
-                
+            st.markdown("### 📜 التراخيص")
+            lic_df = pd.read_sql_query("SELECT license_name AS 'الترخيص', due_date AS 'الانتهاء', status AS 'الحالة' FROM ProjectLicenses WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
+            st.dataframe(lic_df, use_container_width=True, hide_index=True) if not lic_df.empty else st.info("لا يوجد")
         with c3:
-            st.markdown("### 📐 الرسومات التنفيذية")
-            draw_df = pd.read_sql_query("SELECT drawing_name AS 'الرسم', due_date AS 'التسليم', status AS 'الحالة' FROM ProjectDrawings WHERE project_name = ? ORDER BY due_date ASC", conn, params=(selected_project,))
-            if not draw_df.empty:
-                st.dataframe(draw_df, use_container_width=True, hide_index=True)
-            else:
-                st.info("لا توجد رسومات مسجلة.")
+            st.markdown("### 📐 الرسومات")
+            draw_df = pd.read_sql_query("SELECT drawing_name AS 'الرسم', due_date AS 'التسليم', status AS 'الحالة' FROM ProjectDrawings WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
+            st.dataframe(draw_df, use_container_width=True, hide_index=True) if not draw_df.empty else st.info("لا يوجد")
             
     elif nav == "👥 ملخص الإنجازات":
-        st.subheader("إحصائيات الإنجاز للمشاريع النشطة")
-        summary = pd.read_sql_query("""
-            SELECT project_name AS 'اسم المشروع', COUNT(*) AS 'إجمالي التقارير/المهام المنجزة' 
-            FROM WebAttendance 
-            WHERE action='انصراف' AND project_name IS NOT NULL 
-            GROUP BY project_name 
-            ORDER BY COUNT(*) DESC
-        """, conn)
-        
-        if not summary.empty:
-            st.dataframe(summary, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد إحصائيات بعد.")
-            
+        summary = pd.read_sql_query("SELECT project_name AS 'اسم المشروع', COUNT(*) AS 'إجمالي المهام' FROM WebAttendance WHERE action='انصراف' AND project_name IS NOT NULL GROUP BY project_name ORDER BY COUNT(*) DESC", conn)
+        st.dataframe(summary, use_container_width=True, hide_index=True) if not summary.empty else st.info("لا يوجد")
     conn.close()
 
-# ==========================================
-# 8. بوابة الموظف (Employee) والشاشة المشتركة للجميع
-# ==========================================
-def employee_portal():
+def accountant_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     with st.sidebar:
-        try:
-            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
-        except: pass
         st.info(f"مرحباً: {st.session_state['username']}")
-        if st.button("تسجيل الخروج", use_container_width=True):
-            st.session_state['logged_in'] = False
-            st.rerun()
+        if st.button("تسجيل الخروج", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+    nav = st.radio("القائمة:", ["💰 إدارة الأقساط", "👤 لوحتي الشخصية"], horizontal=True)
+    if nav == "💰 إدارة الأقساط":
+        with st.form("add_fin"):
+            c1, c2 = st.columns(2)
+            proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
+            inst_type = c2.selectbox("النوع", ["قسط تنفيذ", "قسط جهاز", "أخرى"])
+            amount = c1.number_input("المبلغ", min_value=0.0)
+            due_date = c2.date_input("الاستحقاق")
+            status = st.selectbox("الحالة", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"])
+            if st.form_submit_button("تسجيل القسط", type="primary"):
+                db_execute("INSERT INTO ProjectFinancials (project_name, installment_type, amount, due_date, status) VALUES (%s, %s, %s, %s, %s)", (proj, inst_type, amount, due_date.strftime("%Y/%m/%d"), status))
+                st.success("تم!")
+        conn = get_db_connection()
+        st.dataframe(pd.read_sql_query("SELECT project_name AS 'المشروع', installment_type AS 'النوع', amount AS 'المبلغ', due_date AS 'تاريخ', status AS 'الحالة' FROM ProjectFinancials", conn), hide_index=True)
+        conn.close()
+    else: render_employee_dashboard(emp_id, balance)
+
+def licensing_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+    with st.sidebar:
+        st.info(f"مرحباً: {st.session_state['username']}")
+        if st.button("تسجيل الخروج", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+    nav = st.radio("القائمة:", ["📜 التراخيص", "👤 لوحتي الشخصية"], horizontal=True)
+    if nav == "📜 التراخيص":
+        with st.form("add_lic"):
+            c1, c2 = st.columns(2)
+            proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
+            lic_name = c2.text_input("اسم الترخيص")
+            due_date = c1.date_input("الانتهاء")
+            status = c2.selectbox("الحالة", ["سارية", "تحت الإجراء", "منتهية"])
+            if st.form_submit_button("تسجيل", type="primary") and lic_name:
+                db_execute("INSERT INTO ProjectLicenses (project_name, license_name, due_date, status) VALUES (%s, %s, %s, %s)", (proj, lic_name, due_date.strftime("%Y/%m/%d"), status))
+                st.success("تم!")
+        conn = get_db_connection()
+        st.dataframe(pd.read_sql_query("SELECT * FROM ProjectLicenses", conn), hide_index=True)
+        conn.close()
+    else: render_employee_dashboard(emp_id, balance)
+
+def engineer_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+    with st.sidebar:
+        st.info(f"مرحباً: {st.session_state['username']}")
+        if st.button("تسجيل الخروج", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+    nav = st.radio("القائمة:", ["📐 الرسومات", "👤 لوحتي الشخصية"], horizontal=True)
+    if nav == "📐 الرسومات":
+        with st.form("add_draw"):
+            c1, c2 = st.columns(2)
+            proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
+            draw_name = c2.text_input("اسم الرسم")
+            due_date = c1.date_input("التسليم")
+            status = c2.selectbox("الحالة", ["قيد التنفيذ", "تحت المراجعة", "مكتملة"])
+            if st.form_submit_button("تسجيل", type="primary") and draw_name:
+                db_execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status) VALUES (%s, %s, %s, %s)", (proj, draw_name, due_date.strftime("%Y/%m/%d"), status))
+                st.success("تم!")
+        conn = get_db_connection()
+        st.dataframe(pd.read_sql_query("SELECT * FROM ProjectDrawings", conn), hide_index=True)
+        conn.close()
+    else: render_employee_dashboard(emp_id, balance)
+
+def employee_portal():
+    emp_id = st.session_state['emp_id']
+    _, _, balance = get_employee_info(emp_id)
+    with st.sidebar:
+        if st.button("تسجيل الخروج", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
     render_employee_dashboard(emp_id, balance)
 
-# دالة لوحة الموظف الأساسية (البصمة، الإجازات، السجلات)
+# ==========================================
+# 8. الشاشة المشتركة للجميع (البصمة)
+# ==========================================
 def render_employee_dashboard(emp_id, balance):
     month, delay_mins, absent_str, overtime_mins = get_employee_stats(emp_id)
     absent_list = [d for d in absent_str.split(",") if d.strip()] if absent_str else []
     
-    st.header("لوحة معلومات الموظف")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("الرصيد السنوي", f"{balance} يوم")
+    c1.metric("الرصيد", f"{balance} يوم")
     c2.metric("تأخيرات", f"{format_hhmm(delay_mins)} ساعة")
     c3.metric("إضافي", f"{format_hhmm(overtime_mins)} ساعة")
     
-    conn = sqlite3.connect(DB_NAME)
-    pending = conn.execute("SELECT COUNT(*) FROM Requests WHERE emp_id=? AND status='قيد الانتظار'", (emp_id,)).fetchone()[0]
+    pending = db_fetchone("SELECT COUNT(*) FROM Requests WHERE emp_id=%s AND status='قيد الانتظار'", (emp_id,))[0]
     c4.metric("طلبات معلقة", pending)
     
-    if absent_list:
-        st.warning(f"⚠️ غياب غير مبرر: ({' ، '.join(absent_list)}) برجاء تقديم إجازة.")
-    
     st.divider()
+    sub_nav = st.radio("العمليات:", ["📍 بصمة حضور/انصراف", "📝 طلب جديد", "🌴 سجلاتي"], horizontal=True)
     
-    sub_nav = st.radio("العمليات الشخصية:", ["📍 تسجيل حضور وانصراف", "📝 تقديم طلب جديد", "🌴 سجلاتي"], horizontal=True)
-    st.divider()
-    
-    if sub_nav == "📍 تسجيل حضور وانصراف":
-        st.subheader("تسجيل الحضور / الانصراف")
-        
-        locations = conn.execute("SELECT name, lat, lon, radius FROM Locations").fetchall()
-        
-        if not locations:
-            st.error("لم يتم تسجيل أي فروع للشركة في النظام بعد.")
-        elif not GEO_AVAILABLE:
-            st.error("مكتبة 'streamlit-js-eval' غير مثبتة.")
+    if sub_nav == "📍 بصمة حضور/انصراف":
+        locations = db_fetchall("SELECT name, lat, lon, radius FROM Locations")
+        if not locations: st.error("لم يتم تسجيل فروع للشركة بعد.")
+        elif not GEO_AVAILABLE: st.error("مكتبة Location غير مثبتة.")
         else:
             loc = get_geolocation()
-            
             if loc and isinstance(loc, dict) and 'coords' in loc:
-                emp_lat = float(loc['coords']['latitude'])
-                emp_lon = float(loc['coords']['longitude'])
-                
+                emp_lat, emp_lon = float(loc['coords']['latitude']), float(loc['coords']['longitude'])
                 closest_loc_name, min_distance, is_allowed = None, float('inf'), False
-                
                 for l_name, l_lat, l_lon, l_rad in locations:
                     dist = haversine(l_lat, l_lon, emp_lat, emp_lon)
-                    if dist < min_distance:
-                        min_distance, closest_loc_name = dist, l_name
-                        if dist <= l_rad: is_allowed = True
+                    if dist < min_distance: min_distance, closest_loc_name, is_allowed = dist, l_name, (dist <= l_rad)
                 
                 if is_allowed:
-                    st.success(f"✅ أنت داخل نطاق فرع: **{closest_loc_name}**")
-                    camera_photo = st.camera_input("التقط صورة لإثبات الحضور أو الانصراف")
-                    
-                    if camera_photo is not None:
-                        img = Image.open(camera_photo)
-                        img.thumbnail((300, 300))
-                        buffered = io.BytesIO()
+                    st.success(f"✅ أنت داخل نطاق فرع: {closest_loc_name}")
+                    camera_photo = st.camera_input("التقط صورة")
+                    if camera_photo:
+                        img = Image.open(camera_photo); img.thumbnail((300, 300)); buffered = io.BytesIO()
                         img.save(buffered, format="JPEG", quality=85)
                         photo_uri = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
                         
-                        st.success("تم التقاط الصورة بنجاح! اختر العملية المطلوبة:")
-                        
-                        if st.button("تسجيل حضور 🟢", use_container_width=True):
-                            now_date = datetime.now().strftime("%Y/%m/%d")
-                            now_time = datetime.now().strftime("%H:%M")
-                            conn.execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (?, ?, ?, 'حضور', ?, ?, ?)", 
-                                         (emp_id, now_date, now_time, int(min_distance), closest_loc_name, photo_uri))
-                            conn.commit()
-                            st.success(f"تم تسجيل الحضور بنجاح الساعة {now_time}")
-                        
+                        if st.button("🟢 تسجيل حضور", use_container_width=True):
+                            db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", (emp_id, datetime.now().strftime("%Y/%m/%d"), datetime.now().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri))
+                            st.success("تم الحضور!")
                         st.markdown("---")
-                        st.markdown("### 📝 تسجيل الانصراف والتقرير اليومي")
-                        
-                        project_choices = [f"اتحاد {i}" for i in range(1, 46)]
-                        selected_proj = st.selectbox("المشروع (الاتحاد) الذي عملت عليه اليوم", project_choices)
-                        daily_rep = st.text_area("ملخص ما تم إنجازه اليوم", placeholder="اكتب بالتفصيل المهام التي أنجزتها...")
-                        
-                        if st.button("تسجيل انصراف 🔴", use_container_width=True):
-                            if not daily_rep.strip():
-                                st.error("❌ يجب كتابة تقرير بما تم إنجازه اليوم لتتمكن من تسجيل الانصراف!")
-                            else:
-                                now_date = datetime.now().strftime("%Y/%m/%d")
-                                now_time = datetime.now().strftime("%H:%M")
-                                conn.execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (?, ?, ?, 'انصراف', ?, ?, ?, ?, ?)", 
-                                             (emp_id, now_date, now_time, int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
-                                conn.commit()
-                                st.success(f"تم تسجيل الانصراف وحفظ التقرير بنجاح الساعة {now_time}")
-                else:
-                    st.error(f"❌ أنت خارج نطاق جميع فروع الشركة. أقرب فرع إليك هو '{closest_loc_name}' ويبعد عنك مسافة {int(min_distance)} متر.")
-            else:
-                st.info("يتم الآن جلب موقعك الجغرافي.. يرجى السماح للمتصفح بمعرفة موقعك (Allow Location).")
+                        selected_proj = st.selectbox("المشروع (للانصراف)", [f"اتحاد {i}" for i in range(1, 46)])
+                        daily_rep = st.text_area("التقرير اليومي")
+                        if st.button("🔴 تسجيل انصراف", use_container_width=True):
+                            if daily_rep.strip():
+                                db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", (emp_id, datetime.now().strftime("%Y/%m/%d"), datetime.now().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
+                                st.success("تم الانصراف بنجاح!")
+                            else: st.error("اكتب التقرير أولاً!")
+                else: st.error(f"❌ أنت خارج النطاق. أقرب فرع ({closest_loc_name}) يبعد {int(min_distance)} متر.")
+            else: st.info("جاري جلب الموقع... يرجى السماح للمتصفح.")
 
-    elif sub_nav == "📝 تقديم طلب جديد":
-        with st.form(f"emp_req_{emp_id}"):
-            req_type = st.selectbox("نوع الطلب", ["إجازة اعتيادية", "إجازة عارضة", "عمل من المنزل", "مأمورية", "إذن"])
+    elif sub_nav == "📝 طلب جديد":
+        with st.form("emp_req"):
+            req_type = st.selectbox("النوع", ["إجازة", "مأمورية", "إذن"])
             req_date = st.date_input("التاريخ")
             notes = st.text_area("السبب")
-            if st.form_submit_button("إرسال للاعتماد", type="primary"):
-                conn.execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (?, ?, ?, ?, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
-                conn.commit()
-                st.success("تم إرسال الطلب!")
-                
+            if st.form_submit_button("إرسال"):
+                db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
+                st.success("تم!")
     elif sub_nav == "🌴 سجلاتي":
-        req_hist = pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=? ORDER BY id DESC", conn, params=(emp_id,))
-        if not req_hist.empty: st.dataframe(req_hist, use_container_width=True, hide_index=True)
-        else: st.info("لا توجد طلبات.")
-        
-    conn.close()
+        conn = get_db_connection()
+        st.dataframe(pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,)), hide_index=True)
+        conn.close()
 
-# ==========================================
-# التوجيه (Routing) مع الأدوار الجديدة
 # ==========================================
 if not st.session_state['logged_in']: login_page()
 else:
