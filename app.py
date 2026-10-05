@@ -82,7 +82,7 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL وتأكيد حسابات الإدارة
+# 3. حماية وتجهيز جداول PostgreSQL وتأكيد صلاحيات الأدمن والمالك
 # ==========================================
 def init_db():
     try:
@@ -102,7 +102,6 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id SERIAL PRIMARY KEY, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
             
-        # إجبار إنشاء وتحديث حساب الأدمن والمالك لضمان عدم فقدان الصلاحيات أبداً
         cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('admin', 'admin123', 'admin', '0') ON CONFLICT (username) DO UPDATE SET role='admin'")
         cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('owner', 'owner123', 'owner', 'owner') ON CONFLICT (username) DO UPDATE SET role='owner'")
             
@@ -678,11 +677,50 @@ def render_employee_dashboard(emp_id, balance):
                         photo_uri = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
                         
                         if st.button("🟢 تسجيل حضور", use_container_width=True):
-                            db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", (emp_id, datetime.now().strftime("%Y/%m/%d"), datetime.now().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri))
+                            db_execute(
+                                "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", 
+                                (emp_id, datetime.now().strftime("%Y/%m/%d"), datetime.now().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri)
+                            )
                             st.success("تم الحضور!")
                         st.markdown("---")
                         selected_proj = st.selectbox("المشروع (للانصراف)", [f"اتحاد {i}" for i in range(1, 46)])
                         daily_rep = st.text_area("التقرير اليومي")
                         if st.button("🔴 تسجيل انصراف", use_container_width=True):
                             if daily_rep.strip():
-                                db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name,
+                                db_execute(
+                                    "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", 
+                                    (emp_id, datetime.now().strftime("%Y/%m/%d"), datetime.now().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep)
+                                )
+                                st.success("تم الانصراف بنجاح!")
+                            else: st.error("اكتب التقرير أولاً!")
+                else: st.error(f"❌ أنت خارج النطاق. أقرب فرع ({closest_loc_name}) يبعد {int(min_distance)} متر.")
+            else: st.info("جاري جلب الموقع... يرجى السماح للمتصفح.")
+
+    elif sub_nav == "📝 طلب جديد":
+        with st.form("emp_req"):
+            req_type = st.selectbox("النوع", ["إجازة", "مأمورية", "إذن"])
+            req_date = st.date_input("التاريخ")
+            notes = st.text_input("السبب")
+            if st.form_submit_button("إرسال"):
+                db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
+                st.success("تم!")
+    elif sub_nav == "🌴 سجلاتي":
+        conn = get_db_connection()
+        df = pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,))
+        conn.close()
+        if not df.empty:
+            df.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
+            st.dataframe(df, hide_index=True)
+        else: st.info("لا توجد طلبات.")
+
+# ==========================================
+if not st.session_state['logged_in']: login_page()
+else:
+    role = st.session_state['role']
+    if role == 'admin': admin_portal()
+    elif role == 'manager': manager_portal()
+    elif role == 'owner': owner_portal()
+    elif role == 'accountant': accountant_portal()
+    elif role == 'licensing': licensing_portal()
+    elif role == 'engineer': engineer_portal()
+    else: employee_portal()
