@@ -52,7 +52,7 @@ def db_fetchall(query, params=()):
     return res
 
 # ==========================================
-# 2. الإعدادات الأساسية والأقسام
+# 2. الإعدادات الأساسية والأقسام والواجهة (UI)
 # ==========================================
 try:
     from streamlit_js_eval import get_geolocation
@@ -61,6 +61,106 @@ except ImportError:
     GEO_AVAILABLE = False
 
 st.set_page_config(page_title="Keyan-East HR Portal", page_icon="🏢", layout="wide")
+
+# -------- ثيم الواجهة الاحترافي الجديد --------
+def apply_custom_theme():
+    st.markdown("""
+    <style>
+        /* استدعاء خط تجوال العربي الاحترافي */
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
+        
+        /* تطبيق الخط على كامل المنصة */
+        html, body, [class*="css"], p, h1, h2, h3, h4, h5, h6, span, div, button, input, select, textarea {
+            font-family: 'Tajawal', sans-serif !important;
+        }
+        
+        /* تجميل الأزرار العامة */
+        .stButton>button {
+            background-color: #0052CC !important;
+            color: white !important;
+            border-radius: 8px !important;
+            border: none !important;
+            padding: 0.5rem 1.5rem !important;
+            font-weight: 700 !important;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        .stButton>button:hover {
+            background-color: #0747A6 !important;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+        }
+        
+        /* تجميل كروت الإحصائيات (Metrics) */
+        div[data-testid="metric-container"] {
+            background-color: #ffffff;
+            border: 1px solid #e1e4e8;
+            padding: 20px;
+            border-radius: 12px;
+            border-right: 5px solid #0052CC;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+            transition: transform 0.3s ease;
+        }
+        div[data-testid="metric-container"]:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.08);
+        }
+        div[data-testid="stMetricValue"] {
+            font-size: 2.2rem !important;
+            color: #172B4D !important;
+            font-weight: 800 !important;
+        }
+        
+        /* تجميل الشريط الجانبي (Sidebar) */
+        [data-testid="stSidebar"] {
+            background-color: #172B4D;
+            background-image: linear-gradient(180deg, #172B4D 0%, #0B172A 100%);
+            border-left: 1px solid #2C3E5D;
+        }
+        [data-testid="stSidebar"] * {
+            color: #F4F5F7 !important;
+        }
+        
+        /* تجميل العناوين */
+        h1, h2, h3 {
+            color: #172B4D !important;
+            font-weight: 800 !important;
+        }
+        
+        /* تجميل القوائم والخيارات الراديو */
+        div[role="radiogroup"] {
+            gap: 15px;
+        }
+        div[role="radiogroup"] > label {
+            background-color: #F4F5F7;
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 1px solid #DFE1E6;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        div[role="radiogroup"] > label:hover {
+            background-color: #EBECF0;
+        }
+        
+        /* تجميل الفورم (Form Containers) */
+        [data-testid="stForm"] {
+            background-color: #FAFBFC;
+            border-radius: 12px;
+            border: 1px solid #DFE1E6;
+            padding: 25px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+        
+        /* إخفاء القائمة الافتراضية الخاصة بـ Streamlit من فوق للون الاحترافي */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+    </style>
+    """, unsafe_allow_html=True)
+
+# تشغيل الثيم الاحترافي فوراً
+apply_custom_theme()
+# ----------------------------------------------
 
 OFFICIAL_IN = '11:00'
 OFFICIAL_OUT = '18:00'
@@ -296,8 +396,8 @@ def login_page():
         except:
             pass
         
-        st.markdown("<h2 style='text-align: center; color: #172B4D;'>بوابة Keyan-East</h2>", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center; color: #172B4D; margin-bottom: 20px;'>بوابة Keyan-East</h2>", unsafe_allow_html=True)
+        
         with st.form("login_form"):
             user = st.text_input("اسم المستخدم")
             pwd = st.text_input("كلمة المرور", type="password")
@@ -313,7 +413,7 @@ def login_page():
 # دالة لوحة القيادة الشاملة (الداشبورد) للمالك
 # ==========================================
 def render_company_dashboard():
-    st.header("📊 المؤشرات الحيوية للشركة (Dashboard)")
+    st.header("📊 المؤشرات الحيوية للشركة")
     conn = get_db_connection()
     today = get_egypt_time().strftime("%Y/%m/%d")
 
@@ -335,11 +435,11 @@ def render_company_dashboard():
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("🏗️ نشاط المشاريع (بناءً على التقارير)")
+        st.subheader("🏗️ نشاط المشاريع")
         proj_df = pd.read_sql_query("SELECT project_name AS \"المشروع\", COUNT(*) AS \"عدد المهام\" FROM WebAttendance WHERE project_name IS NOT NULL AND project_name != '' GROUP BY project_name ORDER BY \"عدد المهام\" DESC LIMIT 7", conn)
         if not proj_df.empty:
             proj_df.set_index("المشروع", inplace=True)
-            st.bar_chart(proj_df)
+            st.bar_chart(proj_df, color="#0052CC")
         else:
             st.info("لا توجد بيانات للمشاريع بعد.")
 
@@ -348,7 +448,7 @@ def render_company_dashboard():
         fin_df = pd.read_sql_query("SELECT status AS \"الحالة\", SUM(amount) AS \"الإجمالي\" FROM ProjectFinancials GROUP BY status", conn)
         if not fin_df.empty:
             fin_df.set_index("الحالة", inplace=True)
-            st.bar_chart(fin_df)
+            st.bar_chart(fin_df, color="#FF991F")
         else:
             st.info("لا توجد تعاملات مالية مسجلة.")
 
@@ -902,7 +1002,7 @@ def render_employee_dashboard(emp_id, balance):
     c4.metric("طلبات معلقة", pending)
     
     st.divider()
-    sub_nav = st.radio("العمليات:", ["📍 بصمة وتقارير الإنجاز", "📝 طلب جديد", "🌴 سجلاتي"], horizontal=True)
+    sub_nav = st.radio("العمليات المتاحة:", ["📍 بصمة وتقارير الإنجاز", "📝 تقديم طلب جديد", "🌴 سجلاتي"], horizontal=True)
     
     if sub_nav == "📍 بصمة وتقارير الإنجاز":
         locations = db_fetchall("SELECT name, lat, lon, radius FROM Locations")
@@ -949,7 +1049,7 @@ def render_employee_dashboard(emp_id, balance):
                             st.info("✅ تم تسجيل حضورك اليوم. يمكنك الآن رفع تقارير المشاريع أو تسجيل الانصراف.")
                             st.markdown("---")
                             selected_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)])
-                            daily_rep = st.text_area("تفاصيل الإنجاز")
+                            daily_rep = st.text_area("تفاصيل الإنجاز", placeholder="ماذا أنجزت اليوم في هذا المشروع؟")
                             
                             c_btn1, c_btn2 = st.columns(2)
                             with c_btn1:
@@ -972,14 +1072,14 @@ def render_employee_dashboard(emp_id, balance):
             else:
                 st.info("جاري جلب الموقع... يرجى السماح للمتصفح بالموقع.")
 
-    elif sub_nav == "📝 طلب جديد":
+    elif sub_nav == "📝 تقديم طلب جديد":
         with st.form("emp_req"):
             req_type = st.selectbox("النوع", ["إجازة", "مأمورية", "إذن"])
             req_date = st.date_input("التاريخ")
-            notes = st.text_input("السبب")
-            if st.form_submit_button("إرسال"):
+            notes = st.text_input("السبب أو التفاصيل")
+            if st.form_submit_button("إرسال الطلب", type="primary"):
                 db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
-                st.success("تم إرسال الطلب للمدير بنجاح!")
+                st.success("تم إرسال الطلب لمديرك المباشر بنجاح!")
                 
     elif sub_nav == "🌴 سجلاتي":
         conn = get_db_connection()
@@ -987,7 +1087,7 @@ def render_employee_dashboard(emp_id, balance):
         conn.close()
         if not df.empty:
             df.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
-            st.dataframe(df, hide_index=True)
+            st.dataframe(df, hide_index=True, use_container_width=True)
         else:
             st.info("لا توجد طلبات مسجلة لك حتى الآن.")
 
