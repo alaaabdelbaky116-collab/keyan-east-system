@@ -69,7 +69,6 @@ REQUIRED_HOURS = 7
 DEFAULT_ANNUAL_BALANCE = 21
 LOGO_FILE = "image_c5a585.png"
 
-# قائمة الأقسام المعتمدة في الشركة
 COMPANY_DEPARTMENTS = [
     "اتش ار (HR)", 
     "خدمة عملاء", 
@@ -137,17 +136,24 @@ def authenticate(username, password):
 
 def get_employee_info(emp_id):
     res = db_fetchone("SELECT name, department, annual_balance FROM Employees WHERE emp_id=%s", (emp_id,))
-    return res if res else ("غير مسجل", "غير محدد", DEFAULT_ANNUAL_BALANCE)
+    if res:
+        return res
+    else:
+        return ("غير مسجل", "غير محدد", DEFAULT_ANNUAL_BALANCE)
 
 def get_employee_stats(emp_id):
     res = db_fetchone("SELECT month, delay_mins, absent_dates, overtime_hours FROM MonthlyStats WHERE emp_id=%s ORDER BY month DESC LIMIT 1", (emp_id,))
-    return res if res else (None, 0.0, "", 0.0)
+    if res:
+        return res
+    else:
+        return (None, 0.0, "", 0.0)
 
 # ==========================================
-# 4. محرك تحليل الحضور من الإكسيل
+# 4. محرك تحليل الحضور
 # ==========================================
 def process_excel(file):
-    try: xls = pd.ExcelFile(file)
+    try:
+        xls = pd.ExcelFile(file)
     except Exception as e:
         st.error(f"خطأ في قراءة الملف: {e}")
         return pd.DataFrame()
@@ -163,7 +169,8 @@ def process_excel(file):
     
     for sheet in xls.sheet_names:
         df = pd.read_excel(xls, sheet_name=sheet)
-        if len(df) < 5: continue
+        if len(df) < 5:
+            continue
             
         for r in range(len(df)):
             for c in range(len(df.columns)):
@@ -172,21 +179,29 @@ def process_excel(file):
                     try:
                         name = str(df.iloc[r, c + 1]).strip()
                         emp_id = str(df.iloc[r + 1, c + 1]).strip() 
-                    except: continue
-                    
-                    if name.lower() == 'nan' or not name: continue
+                    except:
+                        continue
+                        
+                    if name.lower() == 'nan' or not name:
+                        continue
+                        
                     start_col = c - 6
-                    if start_col < 0: start_col = 0 
+                    if start_col < 0:
+                        start_col = 0 
                     
-                    try: department = str(df.iloc[r, start_col + 1]).strip()
-                    except: department = "غير محدد"
+                    try:
+                        department = str(df.iloc[r, start_col + 1]).strip()
+                    except:
+                        department = "غير محدد"
                     
                     cur.execute("INSERT INTO Employees (emp_id, name, department, annual_balance) VALUES (%s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department", (emp_id, name, department, DEFAULT_ANNUAL_BALANCE))
                     cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES (%s, %s, 'employee', %s) ON CONFLICT (username) DO NOTHING", (emp_id, emp_id, emp_id))
                     conn.commit()
                     
-                    try: year_month = str(df.iloc[r + 1, start_col + 1]).strip().split('-')[0][:7] 
-                    except: year_month = "2026/10" 
+                    try:
+                        year_month = str(df.iloc[r + 1, start_col + 1]).strip().split('-')[0][:7] 
+                    except:
+                        year_month = "2026/10" 
                     
                     daily_data = df.iloc[r + 9: r + 40, start_col:start_col+5] 
                     total_worked_mins, regular_days, total_shortage_mins, total_overtime_mins, absent_dates = 0, 0, 0, 0, []
@@ -197,50 +212,67 @@ def process_excel(file):
                     for _, row in daily_data.iterrows():
                         try:
                             day_num, day_name = row.iloc[0], str(row.iloc[1]).strip()
-                            if pd.isna(day_num) or day_name == 'Fri.': continue
+                            if pd.isna(day_num) or day_name == 'Fri.':
+                                continue
                             t_in_str, t_out_str = str(row.iloc[2]).strip(), str(row.iloc[3]).strip()
                             has_in = t_in_str != 'nan' and t_in_str != '--:--'
                             has_out = t_out_str != 'nan' and t_out_str != '--:--'
-                        except: continue
+                        except:
+                            continue
                         
-                        try: formatted_date = f"{year_month}/{int(float(day_num)):02d}"
-                        except: formatted_date = f"{year_month}/--"
+                        try:
+                            formatted_date = f"{year_month}/{int(float(day_num)):02d}"
+                        except:
+                            formatted_date = f"{year_month}/--"
                         
                         if not has_in and not has_out:
                             if day_name != 'Thur.' and formatted_date not in emp_perms: 
                                 absent_dates.append(formatted_date)
                         elif has_in and has_out:
                             try:
-                                t_in_dt, t_out_dt = datetime.strptime(t_in_str, time_in_fmt), datetime.strptime(t_out_str, time_in_fmt)
+                                t_in_dt = datetime.strptime(t_in_str, time_in_fmt)
+                                t_out_dt = datetime.strptime(t_out_str, time_in_fmt)
                                 worked_mins = (t_out_dt - t_in_dt).total_seconds() / 60
                                 if worked_mins > 0:
                                     total_worked_mins += worked_mins
                                     regular_days += 1
                                     late_arrival = (t_in_dt - official_in_dt).total_seconds() / 60
                                     daily_shortage = 0
+                                    
                                     if late_arrival > GRACE_PERIOD_MINS:
                                         daily_shortage += late_arrival
                                         early_leave = (official_out_dt - t_out_dt).total_seconds() / 60
-                                        if early_leave > 0: daily_shortage += early_leave
+                                        if early_leave > 0:
+                                            daily_shortage += early_leave
                                     elif late_arrival > 0:
-                                        if worked_mins < required_mins: daily_shortage += (required_mins - worked_mins)
+                                        if worked_mins < required_mins:
+                                            daily_shortage += (required_mins - worked_mins)
                                     else:
                                         early_leave = (official_out_dt - t_out_dt).total_seconds() / 60
-                                        if early_leave > 0: daily_shortage += early_leave
+                                        if early_leave > 0:
+                                            daily_shortage += early_leave
+                                            
+                                    if daily_shortage > 0:
+                                        total_shortage_mins += int(daily_shortage)
                                         
-                                    if daily_shortage > 0: total_shortage_mins += int(daily_shortage)
                                     overtime_mins = (t_out_dt - official_out_dt).total_seconds() / 60
-                                    if overtime_mins > 0: total_overtime_mins += overtime_mins
-                            except: pass
+                                    if overtime_mins > 0:
+                                        total_overtime_mins += overtime_mins
+                            except:
+                                pass
                                 
                     absent_str = ",".join(absent_dates)
                     cur.execute("INSERT INTO MonthlyStats (emp_id, month, delay_mins, absent_dates, overtime_hours) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (emp_id, month) DO UPDATE SET delay_mins=EXCLUDED.delay_mins, absent_dates=EXCLUDED.absent_dates, overtime_hours=EXCLUDED.overtime_hours", (emp_id, year_month, total_shortage_mins, absent_str, total_overtime_mins))
                     conn.commit()
 
                     extracted_data.append({
-                        'الكود': emp_id, 'الاسم': name, 'القسم': department,
-                        'الحضور': regular_days, 'ساعات العمل': format_hhmm(total_worked_mins),
-                        'إضافي': format_hhmm(total_overtime_mins), 'عجز وتأخير': format_hhmm(total_shortage_mins),
+                        'الكود': emp_id,
+                        'الاسم': name,
+                        'القسم': department,
+                        'الحضور': regular_days,
+                        'ساعات العمل': format_hhmm(total_worked_mins),
+                        'إضافي': format_hhmm(total_overtime_mins),
+                        'عجز وتأخير': format_hhmm(total_shortage_mins),
                         'غياب صريح': len(absent_dates)
                     })
     cur.close()
@@ -259,8 +291,10 @@ def login_page():
         try:
             if os.path.exists(LOGO_FILE):
                 img_c1, img_c2, img_c3 = st.columns([1, 2.5, 1])
-                with img_c2: st.image(LOGO_FILE, use_container_width=True)
-        except: pass
+                with img_c2:
+                    st.image(LOGO_FILE, use_container_width=True)
+        except:
+            pass
         
         st.markdown("<h2 style='text-align: center; color: #172B4D;'>بوابة Keyan-East</h2>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
@@ -272,18 +306,64 @@ def login_page():
                 if user_data:
                     st.session_state.update({'logged_in': True, 'role': user_data[0], 'emp_id': user_data[1], 'username': user})
                     st.rerun()
-                else: st.error("بيانات الدخول غير صحيحة!")
+                else:
+                    st.error("بيانات الدخول غير صحيحة!")
 
 # ==========================================
-# دالة موحدة لإنشاء وعرض شيت تقارير البصمة
+# دالة لوحة القيادة الشاملة (الداشبورد) للمالك
 # ==========================================
-def render_attendance_report(department_filter=None, exclude_emp_id=None):
+def render_company_dashboard():
+    st.header("📊 المؤشرات الحيوية للشركة (Dashboard)")
     conn = get_db_connection()
-    
+    today = get_egypt_time().strftime("%Y/%m/%d")
+
+    c1, c2, c3, c4 = st.columns(4)
+    try:
+        total_emps = int(db_fetchone("SELECT COUNT(*) FROM Employees")[0])
+        present_today = int(db_fetchone("SELECT COUNT(DISTINCT emp_id) FROM WebAttendance WHERE date=%s AND action='حضور'", (today,))[0])
+        pending_reqs = int(db_fetchone("SELECT COUNT(*) FROM Requests WHERE status='قيد الانتظار'")[0])
+    except:
+        total_emps, present_today, pending_reqs = 0, 0, 0
+
+    c1.metric("👥 إجمالي الموظفين", total_emps)
+    c2.metric("🟢 حضور اليوم", present_today)
+    c3.metric("🔴 لم يسجل حضور اليوم", max(0, total_emps - present_today))
+    c4.metric("🔔 طلبات معلقة", pending_reqs)
+
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("🏗️ نشاط المشاريع (بناءً على التقارير)")
+        proj_df = pd.read_sql_query("SELECT project_name AS \"المشروع\", COUNT(*) AS \"عدد المهام\" FROM WebAttendance WHERE project_name IS NOT NULL AND project_name != '' GROUP BY project_name ORDER BY \"عدد المهام\" DESC LIMIT 7", conn)
+        if not proj_df.empty:
+            proj_df.set_index("المشروع", inplace=True)
+            st.bar_chart(proj_df)
+        else:
+            st.info("لا توجد بيانات للمشاريع بعد.")
+
+    with col2:
+        st.subheader("💰 الموقف المالي للأقساط")
+        fin_df = pd.read_sql_query("SELECT status AS \"الحالة\", SUM(amount) AS \"الإجمالي\" FROM ProjectFinancials GROUP BY status", conn)
+        if not fin_df.empty:
+            fin_df.set_index("الحالة", inplace=True)
+            st.bar_chart(fin_df)
+        else:
+            st.info("لا توجد تعاملات مالية مسجلة.")
+
+    conn.close()
+
+# ==========================================
+# دالة شيت تقارير البصمة الشامل
+# ==========================================
+def render_attendance_report(department_filter=None):
+    conn = get_db_connection()
     if department_filter:
         emps = db_fetchall("SELECT name FROM Employees WHERE department=%s", (department_filter,))
     else:
         emps = db_fetchall("SELECT name FROM Employees")
+        
     emp_list = ["الكل"] + [e[0] for e in emps]
     
     months = db_fetchall("SELECT DISTINCT substring(date from 1 for 7) FROM WebAttendance")
@@ -300,9 +380,7 @@ def render_attendance_report(department_filter=None, exclude_emp_id=None):
         
     query = """
         SELECT 
-            w.date AS date_val,
-            e.name AS emp_name,
-            e.department AS dept,
+            w.date AS date_val, e.name AS emp_name, e.department AS dept,
             MIN(CASE WHEN w.action = 'حضور' THEN w.time END) AS check_in,
             MAX(CASE WHEN w.action = 'انصراف' THEN w.time END) AS check_out,
             MAX(w.location_name) AS loc,
@@ -350,15 +428,15 @@ def render_attendance_report(department_filter=None, exclude_emp_id=None):
         csv_df = final_df.drop(columns=['صورة الإثبات'])
         csv = csv_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
-            label="📥 تحميل شيت التقرير (Excel/CSV) لحساب الرواتب", 
+            label="📥 تحميل شيت التقرير (Excel/CSV)", 
             data=csv, 
             file_name=f"Attendance_Sheet_{get_egypt_time().strftime('%Y%m%d')}.csv", 
-            mime='text/csv',
-            type="primary",
+            mime='text/csv', 
+            type="primary", 
             use_container_width=True
         )
     else:
-        st.info("لا توجد سجلات حضور وانصراف تطابق خيارات البحث.")
+        st.info("لا توجد سجلات تطابق خيارات البحث.")
 
 # ==========================================
 # 6. بوابة الإدارة (Admin)
@@ -366,31 +444,28 @@ def render_attendance_report(department_filter=None, exclude_emp_id=None):
 def admin_portal():
     with st.sidebar:
         try:
-            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
-        except: pass
+            if os.path.exists(LOGO_FILE):
+                st.image(LOGO_FILE)
+        except:
+            pass
         st.success(f"مرحباً بك: {st.session_state['username']} (مدير النظام)")
         if st.button("تسجيل الخروج", use_container_width=True):
             st.session_state['logged_in'] = False
             st.rerun()
 
-    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات العامة", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 إدارة المواقع", "📌 تقارير المناديب (شيت البصمة)"], horizontal=True)
+    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 المواقع", "📌 تقارير المناديب"], horizontal=True)
     st.divider()
     
     if nav == "📊 تحليل البصمة":
         st.header("تحليل ملف الحضور والانصراف")
         uploaded_file = st.file_uploader("ارفع شيت البصمة (Excel)", type=['xls', 'xlsx'])
         if uploaded_file and st.button("بدء التحليل", type="primary"):
-            with st.spinner("جاري المطابقة..."):
-                try:
-                    df = process_excel(uploaded_file)
-                    if df is not None and not df.empty:
-                        st.success("تم التحليل بنجاح!")
-                        st.dataframe(df, use_container_width=True, hide_index=True)
-                except Exception as e:
-                    st.error("❌ حدث خطأ غير متوقع")
-                    st.code(traceback.format_exc(), language="python")
+            df = process_excel(uploaded_file)
+            if df is not None and not df.empty:
+                st.success("تم التحليل بنجاح!")
+                st.dataframe(df, use_container_width=True, hide_index=True)
 
-    elif nav == "✅ الطلبات العامة":
+    elif nav == "✅ الطلبات":
         st.header("جميع طلبات الموظفين بالشركة")
         conn = get_db_connection()
         all_reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, e.department, r.date, r.req_type, r.notes, r.status FROM Requests r LEFT JOIN Employees e ON r.emp_id = e.emp_id ORDER BY r.id DESC LIMIT 50", conn)
@@ -398,42 +473,30 @@ def admin_portal():
         if not all_reqs.empty: 
             all_reqs.columns = ['رقم', 'كود الموظف', 'الاسم', 'القسم', 'التاريخ', 'نوع الطلب', 'السبب', 'الحالة']
             st.dataframe(all_reqs, use_container_width=True, hide_index=True)
-        else: st.info("لا توجد طلبات مسجلة حالياً.")
+        else:
+            st.info("لا توجد طلبات مسجلة حالياً.")
 
     elif nav == "➕ إنشاء حساب":
         st.header("إضافة حساب وتحديد القسم")
-        st.info("💡 ملاحظة: إذا اخترت صلاحية 'رئيس قسم / مدير' لموظف، سيتمكن هذا الموظف تلقائياً من رؤية واعتماد طلبات الموظفين التابعين لنفس قسمه.")
-        
         with st.form("new_user"):
             c1, c2 = st.columns(2)
             new_name = c1.text_input("اسم الموظف الرباعي")
             new_emp_id = c2.text_input("كود الموظف (ID)")
-            
-            new_dept = c1.selectbox("القسم / الإدارة التابع لها", COMPANY_DEPARTMENTS)
+            new_dept = c1.selectbox("القسم / الإدارة", COMPANY_DEPARTMENTS)
             
             role_choice = c2.selectbox("صلاحيات الحساب", [
-                "موظف عادي (Employee)", 
-                "رئيس قسم / مدير (Manager)", 
-                "مدير إداري (Admin Manager)", 
-                "مهندس (Engineer)", 
-                "محاسب (Accountant)", 
-                "مسؤول تراخيص (Licensing)", 
-                "مسؤول نظام (Admin)", 
-                "مالك (Owner)"
+                "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
+                "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", 
+                "مسؤول نظام (Admin)", "مالك (Owner)"
             ])
-            
             new_user = c1.text_input("اسم المستخدم للدخول")
             new_pwd = c2.text_input("كلمة المرور")
             
             role_map = {
-                "موظف عادي (Employee)": "employee", 
-                "رئيس قسم / مدير (Manager)": "manager", 
-                "مدير إداري (Admin Manager)": "admin_manager", 
-                "مهندس (Engineer)": "engineer", 
-                "محاسب (Accountant)": "accountant", 
-                "مسؤول تراخيص (Licensing)": "licensing", 
-                "مسؤول نظام (Admin)": "admin", 
-                "مالك (Owner)": "owner"
+                "موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", 
+                "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", 
+                "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", 
+                "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"
             }
             
             if st.form_submit_button("إنشاء الحساب", type="primary"):
@@ -441,11 +504,9 @@ def admin_portal():
                     try:
                         db_execute("INSERT INTO Employees (emp_id, name, department, annual_balance) VALUES (%s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department", (new_emp_id, new_name, new_dept, DEFAULT_ANNUAL_BALANCE))
                         db_execute("INSERT INTO Users (username, password, role, emp_id) VALUES (%s, %s, %s, %s)", (new_user, new_pwd, role_map[role_choice], new_emp_id))
-                        st.success(f"✅ تم إنشاء حساب ({new_name}) بنجاح! وتم تعيينه في قسم: {new_dept}.")
-                    except Exception as e:
-                        st.error("اسم المستخدم أو كود الموظف مسجل مسبقاً! الرجاء تغييره.")
-                else:
-                    st.error("يرجى تعبئة جميع الحقول المطلوبة أولاً!")
+                        st.success(f"تم إنشاء حساب ({new_name}) بنجاح!")
+                    except:
+                        st.error("اسم المستخدم مسجل مسبقاً!")
 
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
@@ -453,20 +514,19 @@ def admin_portal():
         users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id", conn)
         conn.close()
         
-        if users_df.empty:
-            st.info("لا توجد حسابات مسجلة.")
-        else:
+        if not users_df.empty:
             display_df = users_df.copy()
             display_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'اسم الموظف', 'القسم', 'الصلاحية الحالية']
-            display_map = {"employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
+            display_map = {
+                "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
+                "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", 
+                "admin": "مسؤول نظام", "owner": "المالك"
+            }
             display_df['الصلاحية الحالية'] = display_df['الصلاحية الحالية'].map(display_map)
-            
             st.dataframe(display_df, use_container_width=True, hide_index=True)
             
             st.divider()
             st.subheader("تعديل بيانات حساب موجود")
-            
-            # --- القائمة خارج الفورم لتحديث القيم تلقائياً ---
             selected_user = st.selectbox("📌 اختر الحساب المطلوب تعديله:", users_df['username'].tolist())
             
             curr_data = users_df[users_df['username'] == selected_user].iloc[0]
@@ -475,39 +535,50 @@ def admin_portal():
             curr_dept = curr_data['department'] if pd.notna(curr_data['department']) and curr_data['department'] in COMPANY_DEPARTMENTS else COMPANY_DEPARTMENTS[0]
             curr_role = curr_data['role']
             
+            role_options = [
+                "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
+                "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", 
+                "مسؤول نظام (Admin)", "مالك (Owner)"
+            ]
+            
             role_reverse_map = {
-                "employee": "موظف عادي (Employee)", "manager": "رئيس قسم / مدير (Manager)",
-                "admin_manager": "مدير إداري (Admin Manager)", "engineer": "مهندس (Engineer)",
-                "accountant": "محاسب (Accountant)", "licensing": "مسؤول تراخيص (Licensing)",
+                "employee": "موظف عادي (Employee)", "manager": "رئيس قسم / مدير (Manager)", 
+                "admin_manager": "مدير إداري (Admin Manager)", "engineer": "مهندس (Engineer)", 
+                "accountant": "محاسب (Accountant)", "licensing": "مسؤول تراخيص (Licensing)", 
                 "admin": "مسؤول نظام (Admin)", "owner": "مالك (Owner)"
             }
+            
             default_role_text = role_reverse_map.get(curr_role, "موظف عادي (Employee)")
-            role_options = ["موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"]
             role_index = role_options.index(default_role_text) if default_role_text in role_options else 0
             
-            # --- الفورم للتعديل والاعتماد فقط ---
             with st.form("edit_user_form"):
                 c1, c2 = st.columns(2)
-                
                 new_name = c2.text_input("تعديل اسم الموظف", value=curr_name)
                 new_dept = c1.selectbox("تعديل القسم", COMPANY_DEPARTMENTS, index=COMPANY_DEPARTMENTS.index(curr_dept) if curr_dept in COMPANY_DEPARTMENTS else 0)
-                
-                new_username = c2.text_input("اسم المستخدم الجديد (اتركه لتجاهل التعديل)")
-                new_pwd = c1.text_input("كلمة المرور الجديدة (اتركها لتجاهل التعديل)")
-                
+                new_username = c2.text_input("اسم المستخدم الجديد")
+                new_pwd = c1.text_input("كلمة المرور الجديدة")
                 new_role_choice = c2.selectbox("الصلاحية الجديدة", role_options, index=role_index)
                 
                 if st.form_submit_button("تحديث البيانات", type="primary"):
-                    role_map = {"موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
+                    role_map = {
+                        "موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", 
+                        "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", 
+                        "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", 
+                        "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"
+                    }
                     final_username = new_username.strip() if new_username.strip() else selected_user
                     
                     try:
-                        updates = ["role=%s"]; params = [role_map[new_role_choice]]
-                        if final_username != selected_user:
-                            updates.append("username=%s"); params.append(final_username)
-                        if new_pwd.strip():
-                            updates.append("password=%s"); params.append(new_pwd.strip())
+                        updates = ["role=%s"]
+                        params = [role_map[new_role_choice]]
                         
+                        if final_username != selected_user:
+                            updates.append("username=%s")
+                            params.append(final_username)
+                        if new_pwd.strip():
+                            updates.append("password=%s")
+                            params.append(new_pwd.strip())
+                            
                         params.append(selected_user)
                         db_execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=%s", tuple(params))
                         
@@ -520,46 +591,40 @@ def admin_portal():
                     except Exception as e:
                         st.error(f"حدث خطأ: {e}")
 
-    elif nav == "📍 إدارة المواقع":
-        st.header("📍 إضافة فروع ومواقع الشركة (بواسطة الـ GPS)")
+    elif nav == "📍 المواقع":
+        st.header("إضافة مواقع (بواسطة الـ GPS)")
         if not GEO_AVAILABLE:
             st.error("مكتبة 'streamlit-js-eval' غير مثبتة.")
-            admin_lat, admin_lon = 0.0, 0.0
         else:
-            c1, c2 = st.columns([3, 1])
-            with c1: st.info("النظام يقوم بقراءة موقعك الجغرافي الحالي. للذهاب لموقع جديد وتسجيله، اذهب للموقع واضغط زر التحديث.")
-            with c2: 
-                if st.button("🔄 تحديث موقعي الآن", use_container_width=True):
-                    st.rerun()
-                    
+            if st.button("🔄 تحديث موقعي الآن"):
+                st.rerun()
+                
             loc_admin = get_geolocation()
             admin_lat, admin_lon = 0.0, 0.0
+            
             if loc_admin and isinstance(loc_admin, dict) and 'coords' in loc_admin:
                 admin_lat = float(loc_admin['coords']['latitude'])
                 admin_lon = float(loc_admin['coords']['longitude'])
-                st.success(f"📍 تم التقاط موقعك بنجاح! خط العرض: {admin_lat:.6f} | خط الطول: {admin_lon:.6f}")
+                st.success(f"📍 موقعك الحالي: خط العرض: {admin_lat:.6f} | خط الطول: {admin_lon:.6f}")
         
         with st.form("add_location_form"):
-            loc_name = st.text_input("اسم الفرع أو الموقع (مثال: موقع التجمع، مقر الشركة)")
+            loc_name = st.text_input("اسم الفرع")
             c1, c2, c3 = st.columns(3)
-            new_lat = c1.number_input("خط العرض (Latitude)", value=admin_lat, format="%.6f")
-            new_lon = c2.number_input("خط الطول (Longitude)", value=admin_lon, format="%.6f")
+            new_lat = c1.number_input("خط العرض", value=admin_lat, format="%.6f")
+            new_lon = c2.number_input("خط الطول", value=admin_lon, format="%.6f")
             new_rad = c3.number_input("النطاق المسموح (بالمتر)", value=100.0, min_value=10.0)
             
-            if st.form_submit_button("حفظ الموقع", type="primary"):
-                if loc_name.strip() != "":
-                    db_execute("INSERT INTO Locations (name, lat, lon, radius) VALUES (%s, %s, %s, %s)", (loc_name, new_lat, new_lon, new_rad))
-                    st.success("تم حفظ الموقع بنجاح!")
-                    st.rerun()
-                else: st.error("يرجى كتابة اسم الموقع!")
-        
-        st.divider()
-        st.subheader("المواقع المسجلة حالياً")
+            if st.form_submit_button("حفظ الموقع", type="primary") and loc_name.strip() != "":
+                db_execute("INSERT INTO Locations (name, lat, lon, radius) VALUES (%s, %s, %s, %s)", (loc_name, new_lat, new_lon, new_rad))
+                st.success("تم حفظ الموقع بنجاح!")
+                st.rerun()
+                
         conn = get_db_connection()
         locations_df = pd.read_sql_query("SELECT id, name, lat, lon, radius FROM Locations", conn)
         conn.close()
+        
         if not locations_df.empty:
-            locations_df.columns = ['id', 'اسم الموقع', 'خط العرض', 'خط الطول', 'النطاق (متر)']
+            locations_df.columns = ['id', 'اسم الموقع', 'خط العرض', 'خط الطول', 'النطاق']
             st.dataframe(locations_df.drop(columns=['id']), use_container_width=True)
             with st.form("delete_loc"):
                 loc_to_delete = st.selectbox("حذف موقع:", locations_df['اسم الموقع'].tolist())
@@ -568,7 +633,7 @@ def admin_portal():
                     st.success("تم الحذف بنجاح!")
                     st.rerun()
 
-    elif nav == "📌 تقارير المناديب (شيت البصمة)":
+    elif nav == "📌 تقارير المناديب":
         st.header("شيت الحضور والانصراف المجمع")
         render_attendance_report()
 
@@ -580,40 +645,43 @@ def admin_manager_portal():
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     with st.sidebar:
         try:
-            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
-        except: pass
+            if os.path.exists(LOGO_FILE):
+                st.image(LOGO_FILE)
+        except:
+            pass
         st.success(f"مرحباً: {st.session_state['username']} (المدير الإداري)")
         if st.button("تسجيل الخروج", use_container_width=True):
             st.session_state['logged_in'] = False
             st.rerun()
 
-    nav = st.radio("القائمة:", ["✅ طلبات جميع الموظفين", "📝 تقارير الحضور والإنجاز", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "✅ طلبات الموظفين", "📝 تقارير الحضور", "👤 لوحتي الشخصية"], horizontal=True)
     st.divider()
+    
+    if nav == "📊 لوحة القيادة":
+        render_company_dashboard()
 
-    if nav == "✅ طلبات جميع الموظفين":
+    elif nav == "✅ طلبات الموظفين":
         st.header("إدارة طلبات الموظفين (جميع الأقسام)")
         conn = get_db_connection()
         reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, e.department, r.date, r.req_type, r.notes FROM Requests r JOIN Employees e ON r.emp_id = e.emp_id WHERE r.status = 'قيد الانتظار' AND r.emp_id != %s", conn, params=(emp_id,))
         conn.close()
         
-        if reqs.empty: st.success("لا توجد طلبات معلقة في الشركة حالياً.")
+        if reqs.empty:
+            st.success("لا توجد طلبات معلقة.")
         else:
             for _, row in reqs.iterrows():
                 with st.expander(f"طلب من: {row['name']} (القسم: {row['department']}) - نوع الطلب: {row['req_type']}"):
-                    st.write(f"**تاريخ الطلب:** {row['date']}")
-                    st.write(f"**الملاحظات/السبب:** {row['notes']}")
+                    st.write(f"**الملاحظات:** {row['notes']}")
                     c1, c2 = st.columns(2)
                     if c1.button("موافقة واعتماد", key=f"app_{row['id']}", type="primary"):
                         db_execute("UPDATE Requests SET status='مقبول' WHERE id=%s", (row['id'],))
                         db_execute("INSERT INTO Permissions VALUES (%s, %s, %s)", (row['emp_id'], row['date'], row['req_type']))
-                        st.success("تم الاعتماد!")
                         st.rerun()
                     if c2.button("رفض الطلب", key=f"rej_{row['id']}"):
                         db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],))
-                        st.warning("تم الرفض!")
                         st.rerun()
         
-    elif nav == "📝 تقارير الحضور والإنجاز":
+    elif nav == "📝 تقارير الحضور":
         st.header("شيت الحضور والتقارير الشامل")
         render_attendance_report()
         
@@ -628,8 +696,10 @@ def manager_portal():
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     with st.sidebar:
         try:
-            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
-        except: pass
+            if os.path.exists(LOGO_FILE):
+                st.image(LOGO_FILE)
+        except:
+            pass
         st.info(f"مرحباً: {st.session_state['username']} (رئيس قسم: {emp_dept})")
         if st.button("تسجيل الخروج", use_container_width=True):
             st.session_state['logged_in'] = False
@@ -643,11 +713,12 @@ def manager_portal():
         conn = get_db_connection()
         reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, r.date, r.req_type, r.notes FROM Requests r JOIN Employees e ON r.emp_id = e.emp_id WHERE e.department = %s AND r.status = 'قيد الانتظار' AND r.emp_id != %s", conn, params=(emp_dept, emp_id))
         conn.close()
-        if reqs.empty: st.success("لا توجد طلبات معلقة لفريقك حالياً.")
+        
+        if reqs.empty:
+            st.success("لا توجد طلبات معلقة لفريقك حالياً.")
         else:
             for _, row in reqs.iterrows():
-                with st.expander(f"طلب من: {row['name']} (كود: {row['emp_id']}) - {row['req_type']}"):
-                    st.write(f"الملاحظات: {row['notes']}")
+                with st.expander(f"طلب من: {row['name']} - {row['req_type']}"):
                     c1, c2 = st.columns(2)
                     if c1.button("موافقة", key=f"app_{row['id']}", type="primary"):
                         db_execute("UPDATE Requests SET status='مقبول' WHERE id=%s", (row['id'],))
@@ -656,9 +727,8 @@ def manager_portal():
                     if c2.button("رفض", key=f"rej_{row['id']}"):
                         db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],))
                         st.rerun()
-        
+                        
     elif nav == "📝 تقارير دوام القسم":
-        st.header(f"شيت حضور وانصراف قسم: {emp_dept}")
         render_attendance_report(department_filter=emp_dept)
         
     elif nav == "👤 لوحتي الشخصية":
@@ -671,62 +741,61 @@ def owner_portal():
     with st.sidebar:
         st.success(f"مرحباً بك: {st.session_state['username']} (المالك)")
         if st.button("تسجيل الخروج", use_container_width=True):
-            st.session_state['logged_in'] = False; st.rerun()
+            st.session_state['logged_in'] = False
+            st.rerun()
 
     st.title("👑 لوحة تحكم المالك")
-    nav = st.radio("القائمة:", ["📊 تقارير المهام", "📈 الموقف المالي والهندسي والقانوني", "👥 ملخص الإنجازات"], horizontal=True)
+    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "📈 الموقف المالي والهندسي والقانوني"], horizontal=True)
     st.divider()
 
-    conn = get_db_connection()
-    if nav == "📊 تقارير المهام":
+    if nav == "📊 لوحة القيادة":
+        render_company_dashboard()
+        
+    elif nav == "📑 تقارير المهام":
+        conn = get_db_connection()
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع لعرض المهام:", project_list)
         reports = pd.read_sql_query("SELECT w.date, e.name, e.department, w.daily_report FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.project_name = %s AND w.action IN ('انصراف', 'تقرير') ORDER BY w.id DESC", conn, params=(selected_project,))
+        
         if not reports.empty: 
-            reports.columns = ['التاريخ', 'الموظف', 'القسم', 'ما تم إنجازه']
+            reports.columns = ['التاريخ', 'الموظف', 'القسم', 'الإنجاز']
             st.dataframe(reports, use_container_width=True, hide_index=True)
-        else: st.info("لا يوجد.")
+        else:
+            st.info("لا يوجد تقارير مسجلة لهذا المشروع.")
+        conn.close()
             
     elif nav == "📈 الموقف المالي والهندسي والقانوني":
+        conn = get_db_connection()
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع:", project_list)
+        
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("### 💰 الأقساط")
             fin_df = pd.read_sql_query("SELECT installment_type, amount, due_date, status FROM ProjectFinancials WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
             if not fin_df.empty:
-                fin_df.columns = ['النوع', 'المبلغ', 'تاريخ الاستحقاق', 'الحالة']
                 st.dataframe(fin_df, use_container_width=True, hide_index=True)
-            else: st.info("لا يوجد")
         with c2:
             st.markdown("### 📜 التراخيص")
             lic_df = pd.read_sql_query("SELECT license_name, due_date, status FROM ProjectLicenses WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
             if not lic_df.empty:
-                lic_df.columns = ['الترخيص', 'الانتهاء', 'الحالة']
                 st.dataframe(lic_df, use_container_width=True, hide_index=True)
-            else: st.info("لا يوجد")
         with c3:
             st.markdown("### 📐 الرسومات")
             draw_df = pd.read_sql_query("SELECT drawing_name, due_date, status FROM ProjectDrawings WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
             if not draw_df.empty:
-                draw_df.columns = ['الرسم', 'التسليم', 'الحالة']
                 st.dataframe(draw_df, use_container_width=True, hide_index=True)
-            else: st.info("لا يوجد")
-            
-    elif nav == "👥 ملخص الإنجازات":
-        summary = pd.read_sql_query("SELECT project_name, COUNT(*) FROM WebAttendance WHERE action IN ('انصراف', 'تقرير') AND project_name IS NOT NULL GROUP BY project_name ORDER BY COUNT(*) DESC", conn)
-        if not summary.empty:
-            summary.columns = ['اسم المشروع', 'إجمالي المهام']
-            st.dataframe(summary, use_container_width=True, hide_index=True)
-        else: st.info("لا يوجد")
-    conn.close()
+        conn.close()
 
 def accountant_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     with st.sidebar:
         st.info(f"مرحباً: {st.session_state['username']}")
-        if st.button("تسجيل الخروج", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+        if st.button("تسجيل الخروج", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.rerun()
+            
     nav = st.radio("القائمة:", ["💰 إدارة الأقساط", "👤 لوحتي الشخصية"], horizontal=True)
     if nav == "💰 إدارة الأقساط":
         with st.form("add_fin"):
@@ -738,21 +807,26 @@ def accountant_portal():
             status = st.selectbox("الحالة", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"])
             if st.form_submit_button("تسجيل القسط", type="primary"):
                 db_execute("INSERT INTO ProjectFinancials (project_name, installment_type, amount, due_date, status) VALUES (%s, %s, %s, %s, %s)", (proj, inst_type, amount, due_date.strftime("%Y/%m/%d"), status))
-                st.success("تم!")
+                st.success("تم التسجيل بنجاح!")
+                
         conn = get_db_connection()
         df = pd.read_sql_query("SELECT project_name, installment_type, amount, due_date, status FROM ProjectFinancials", conn)
         conn.close()
         if not df.empty:
             df.columns = ['المشروع', 'النوع', 'المبلغ', 'تاريخ', 'الحالة']
             st.dataframe(df, hide_index=True)
-    else: render_employee_dashboard(emp_id, balance)
+    else:
+        render_employee_dashboard(emp_id, balance)
 
 def licensing_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     with st.sidebar:
         st.info(f"مرحباً: {st.session_state['username']}")
-        if st.button("تسجيل الخروج", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+        if st.button("تسجيل الخروج", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.rerun()
+            
     nav = st.radio("القائمة:", ["📜 التراخيص", "👤 لوحتي الشخصية"], horizontal=True)
     if nav == "📜 التراخيص":
         with st.form("add_lic"):
@@ -763,21 +837,26 @@ def licensing_portal():
             status = c2.selectbox("الحالة", ["سارية", "تحت الإجراء", "منتهية"])
             if st.form_submit_button("تسجيل", type="primary") and lic_name:
                 db_execute("INSERT INTO ProjectLicenses (project_name, license_name, due_date, status) VALUES (%s, %s, %s, %s)", (proj, lic_name, due_date.strftime("%Y/%m/%d"), status))
-                st.success("تم!")
+                st.success("تم التسجيل بنجاح!")
+                
         conn = get_db_connection()
         df = pd.read_sql_query("SELECT project_name, license_name, due_date, status FROM ProjectLicenses", conn)
         conn.close()
         if not df.empty:
             df.columns = ['المشروع', 'الترخيص', 'تاريخ الانتهاء', 'الحالة']
             st.dataframe(df, hide_index=True)
-    else: render_employee_dashboard(emp_id, balance)
+    else:
+        render_employee_dashboard(emp_id, balance)
 
 def engineer_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     with st.sidebar:
         st.info(f"مرحباً: {st.session_state['username']}")
-        if st.button("تسجيل الخروج", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+        if st.button("تسجيل الخروج", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.rerun()
+            
     nav = st.radio("القائمة:", ["📐 الرسومات", "👤 لوحتي الشخصية"], horizontal=True)
     if nav == "📐 الرسومات":
         with st.form("add_draw"):
@@ -788,20 +867,24 @@ def engineer_portal():
             status = c2.selectbox("الحالة", ["قيد التنفيذ", "تحت المراجعة", "مكتملة"])
             if st.form_submit_button("تسجيل", type="primary") and draw_name:
                 db_execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status) VALUES (%s, %s, %s, %s)", (proj, draw_name, due_date.strftime("%Y/%m/%d"), status))
-                st.success("تم!")
+                st.success("تم التسجيل بنجاح!")
+                
         conn = get_db_connection()
         df = pd.read_sql_query("SELECT project_name, drawing_name, due_date, status FROM ProjectDrawings", conn)
         conn.close()
         if not df.empty:
             df.columns = ['المشروع', 'اسم الرسم', 'تاريخ التسليم', 'الحالة']
             st.dataframe(df, hide_index=True)
-    else: render_employee_dashboard(emp_id, balance)
+    else:
+        render_employee_dashboard(emp_id, balance)
 
 def employee_portal():
     emp_id = st.session_state['emp_id']
     _, _, balance = get_employee_info(emp_id)
     with st.sidebar:
-        if st.button("تسجيل الخروج", use_container_width=True): st.session_state['logged_in'] = False; st.rerun()
+        if st.button("تسجيل الخروج", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.rerun()
     render_employee_dashboard(emp_id, balance)
 
 # ==========================================
@@ -809,7 +892,6 @@ def employee_portal():
 # ==========================================
 def render_employee_dashboard(emp_id, balance):
     month, delay_mins, absent_str, overtime_mins = get_employee_stats(emp_id)
-    absent_list = [d for d in absent_str.split(",") if d.strip()] if absent_str else []
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("الرصيد", f"{balance} يوم")
@@ -824,73 +906,71 @@ def render_employee_dashboard(emp_id, balance):
     
     if sub_nav == "📍 بصمة وتقارير الإنجاز":
         locations = db_fetchall("SELECT name, lat, lon, radius FROM Locations")
-        if not locations: st.error("لم يتم تسجيل فروع للشركة بعد.")
-        elif not GEO_AVAILABLE: st.error("مكتبة Location غير مثبتة.")
+        if not locations:
+            st.error("لم يتم تسجيل فروع للشركة بعد.")
+        elif not GEO_AVAILABLE:
+            st.error("مكتبة Location غير مثبتة.")
         else:
             loc = get_geolocation()
             if loc and isinstance(loc, dict) and 'coords' in loc:
-                emp_lat, emp_lon = float(loc['coords']['latitude']), float(loc['coords']['longitude'])
-                closest_loc_name, min_distance, is_allowed = None, float('inf'), False
+                emp_lat = float(loc['coords']['latitude'])
+                emp_lon = float(loc['coords']['longitude'])
+                min_distance, closest_loc_name, is_allowed = float('inf'), None, False
+                
                 for l_name, l_lat, l_lon, l_rad in locations:
                     dist = haversine(l_lat, l_lon, emp_lat, emp_lon)
-                    if dist < min_distance: min_distance, closest_loc_name, is_allowed = dist, l_name, (dist <= l_rad)
+                    if dist < min_distance:
+                        min_distance = dist
+                        closest_loc_name = l_name
+                        is_allowed = (dist <= l_rad)
                 
                 if is_allowed:
                     st.success(f"✅ أنت داخل نطاق: {closest_loc_name}")
                     camera_photo = st.camera_input("التقط صورة لإثبات الحضور أو الانصراف")
                     
                     if camera_photo:
-                        img = Image.open(camera_photo); img.thumbnail((300, 300)); buffered = io.BytesIO()
+                        img = Image.open(camera_photo)
+                        img.thumbnail((300, 300))
+                        buffered = io.BytesIO()
                         img.save(buffered, format="JPEG", quality=85)
                         photo_uri = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
                         
                         today_date = get_egypt_time().strftime("%Y/%m/%d")
                         now_time = get_egypt_time().strftime("%H:%M")
                         
-                        has_checked_in = db_fetchone(
-                            "SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", 
-                            (emp_id, today_date)
-                        )[0] > 0
+                        has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
                         
                         if not has_checked_in:
                             if st.button("🟢 تسجيل حضور", use_container_width=True):
-                                db_execute(
-                                    "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", 
-                                    (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri)
-                                )
+                                db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri))
                                 st.success("تم تسجيل الحضور بنجاح!")
                                 st.rerun() 
                         else:
                             st.info("✅ تم تسجيل حضورك اليوم. يمكنك الآن رفع تقارير المشاريع أو تسجيل الانصراف.")
                             st.markdown("---")
-                            st.markdown("### 📝 إضافة تقارير المشاريع (أثناء اليوم أو عند الانصراف)")
-                            
                             selected_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)])
-                            daily_rep = st.text_area("تفاصيل الإنجاز", placeholder="ماذا أنجزت في هذا المشروع؟")
+                            daily_rep = st.text_area("تفاصيل الإنجاز")
                             
                             c_btn1, c_btn2 = st.columns(2)
                             with c_btn1:
                                 if st.button("➕ رفع التقرير فقط (مستمر بالعمل)", use_container_width=True):
                                     if daily_rep.strip():
-                                        db_execute(
-                                            "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'تقرير', %s, %s, %s, %s, %s)", 
-                                            (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep)
-                                        )
-                                        st.success("تم حفظ إنجازك في هذا المشروع! يمكنك تغيير المشروع وإضافة تقرير آخر.")
-                                    else: st.error("اكتب التفاصيل أولاً!")
-                                    
+                                        db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'تقرير', %s, %s, %s, %s, %s)", (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
+                                        st.success("تم حفظ إنجازك!")
+                                    else:
+                                        st.error("اكتب التفاصيل أولاً!")
                             with c_btn2:
                                 if st.button("🔴 رفع التقرير + تسجيل انصراف", use_container_width=True):
                                     if daily_rep.strip():
-                                        db_execute(
-                                            "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", 
-                                            (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep)
-                                        )
-                                        st.success("تم تسجيل الانصراف وحفظ التقرير بنجاح!")
+                                        db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
+                                        st.success("تم تسجيل الانصراف بنجاح!")
                                         st.rerun() 
-                                    else: st.error("اكتب التفاصيل أولاً!")
-                else: st.error(f"❌ أنت خارج النطاق. أقرب فرع ({closest_loc_name}) يبعد {int(min_distance)} متر.")
-            else: st.info("جاري جلب الموقع... يرجى السماح للمتصفح.")
+                                    else:
+                                        st.error("اكتب التفاصيل أولاً!")
+                else:
+                    st.error(f"❌ أنت خارج النطاق. أقرب فرع ({closest_loc_name}) يبعد {int(min_distance)} متر.")
+            else:
+                st.info("جاري جلب الموقع... يرجى السماح للمتصفح بالموقع.")
 
     elif sub_nav == "📝 طلب جديد":
         with st.form("emp_req"):
@@ -899,7 +979,8 @@ def render_employee_dashboard(emp_id, balance):
             notes = st.text_input("السبب")
             if st.form_submit_button("إرسال"):
                 db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
-                st.success("تم!")
+                st.success("تم إرسال الطلب للمدير بنجاح!")
+                
     elif sub_nav == "🌴 سجلاتي":
         conn = get_db_connection()
         df = pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,))
@@ -907,19 +988,29 @@ def render_employee_dashboard(emp_id, balance):
         if not df.empty:
             df.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
             st.dataframe(df, hide_index=True)
-        else: st.info("لا توجد طلبات.")
+        else:
+            st.info("لا توجد طلبات مسجلة لك حتى الآن.")
 
 # ==========================================
 # 11. نظام التوجيه (Routing) لجميع الصلاحيات
 # ==========================================
-if not st.session_state['logged_in']: login_page()
+if not st.session_state['logged_in']:
+    login_page()
 else:
     role = st.session_state['role']
-    if role == 'admin': admin_portal()
-    elif role == 'admin_manager': admin_manager_portal()
-    elif role == 'manager': manager_portal()
-    elif role == 'owner': owner_portal()
-    elif role == 'accountant': accountant_portal()
-    elif role == 'licensing': licensing_portal()
-    elif role == 'engineer': engineer_portal()
-    else: employee_portal()
+    if role == 'admin':
+        admin_portal()
+    elif role == 'admin_manager':
+        admin_manager_portal()
+    elif role == 'manager':
+        manager_portal()
+    elif role == 'owner':
+        owner_portal()
+    elif role == 'accountant':
+        accountant_portal()
+    elif role == 'licensing':
+        licensing_portal()
+    elif role == 'engineer':
+        engineer_portal()
+    else:
+        employee_portal()
