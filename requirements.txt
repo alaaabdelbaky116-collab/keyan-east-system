@@ -6,3 +6,4 @@ streamlit-js-eval
 psycopg2-binary
 xlrd
 pytz
+plotly
