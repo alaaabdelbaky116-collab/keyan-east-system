@@ -409,7 +409,6 @@ def admin_portal():
             new_name = c1.text_input("اسم الموظف الرباعي")
             new_emp_id = c2.text_input("كود الموظف (ID)")
             
-            # قائمة الأقسام المحددة
             new_dept = c1.selectbox("القسم / الإدارة التابع لها", COMPANY_DEPARTMENTS)
             
             role_choice = c2.selectbox("صلاحيات الحساب", [
@@ -440,12 +439,8 @@ def admin_portal():
             if st.form_submit_button("إنشاء الحساب", type="primary"):
                 if new_user and new_pwd and new_emp_id and new_name:
                     try:
-                        # 1. إدخال أو تحديث بيانات الموظف (الاسم والقسم)
                         db_execute("INSERT INTO Employees (emp_id, name, department, annual_balance) VALUES (%s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department", (new_emp_id, new_name, new_dept, DEFAULT_ANNUAL_BALANCE))
-                        
-                        # 2. إنشاء الحساب وربطه بالموظف
                         db_execute("INSERT INTO Users (username, password, role, emp_id) VALUES (%s, %s, %s, %s)", (new_user, new_pwd, role_map[role_choice], new_emp_id))
-                        
                         st.success(f"✅ تم إنشاء حساب ({new_name}) بنجاح! وتم تعيينه في قسم: {new_dept}.")
                     except Exception as e:
                         st.error("اسم المستخدم أو كود الموظف مسجل مسبقاً! الرجاء تغييره.")
@@ -455,65 +450,75 @@ def admin_portal():
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
         conn = get_db_connection()
-        # جلب البيانات الشاملة للمستخدمين
         users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id", conn)
         conn.close()
         
-        display_df = users_df.copy()
-        display_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'اسم الموظف', 'القسم', 'الصلاحية الحالية']
-        display_map = {"employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
-        display_df['الصلاحية الحالية'] = display_df['الصلاحية الحالية'].map(display_map)
-        
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-        
-        st.divider()
-        st.subheader("تعديل بيانات حساب موجود")
-        with st.form("edit_user_form"):
-            c1, c2 = st.columns(2)
-            selected_user = c1.selectbox("اختر الحساب المطلوب تعديله", users_df['username'].tolist())
+        if users_df.empty:
+            st.info("لا توجد حسابات مسجلة.")
+        else:
+            display_df = users_df.copy()
+            display_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'اسم الموظف', 'القسم', 'الصلاحية الحالية']
+            display_map = {"employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
+            display_df['الصلاحية الحالية'] = display_df['الصلاحية الحالية'].map(display_map)
             
-            # استخراج بيانات الحساب المحدد لعرضها كقيم افتراضية
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            
+            st.divider()
+            st.subheader("تعديل بيانات حساب موجود")
+            
+            # --- القائمة خارج الفورم لتحديث القيم تلقائياً ---
+            selected_user = st.selectbox("📌 اختر الحساب المطلوب تعديله:", users_df['username'].tolist())
+            
             curr_data = users_df[users_df['username'] == selected_user].iloc[0]
             curr_emp_id = curr_data['emp_id']
             curr_name = curr_data['name'] if pd.notna(curr_data['name']) else ""
             curr_dept = curr_data['department'] if pd.notna(curr_data['department']) and curr_data['department'] in COMPANY_DEPARTMENTS else COMPANY_DEPARTMENTS[0]
+            curr_role = curr_data['role']
             
-            new_name = c2.text_input("تعديل اسم الموظف", value=curr_name)
-            new_dept = c1.selectbox("تعديل القسم", COMPANY_DEPARTMENTS, index=COMPANY_DEPARTMENTS.index(curr_dept) if curr_dept in COMPANY_DEPARTMENTS else 0)
+            role_reverse_map = {
+                "employee": "موظف عادي (Employee)", "manager": "رئيس قسم / مدير (Manager)",
+                "admin_manager": "مدير إداري (Admin Manager)", "engineer": "مهندس (Engineer)",
+                "accountant": "محاسب (Accountant)", "licensing": "مسؤول تراخيص (Licensing)",
+                "admin": "مسؤول نظام (Admin)", "owner": "مالك (Owner)"
+            }
+            default_role_text = role_reverse_map.get(curr_role, "موظف عادي (Employee)")
+            role_options = ["موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"]
+            role_index = role_options.index(default_role_text) if default_role_text in role_options else 0
             
-            new_username = c2.text_input("اسم المستخدم الجديد (اتركه لتجاهل التعديل)")
-            new_pwd = c1.text_input("كلمة المرور الجديدة (اتركها لتجاهل التعديل)")
-            
-            new_role_choice = c2.selectbox("الصلاحية الجديدة", [
-                "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
-                "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", 
-                "مسؤول نظام (Admin)", "مالك (Owner)"
-            ])
-            
-            if st.form_submit_button("تحديث البيانات", type="primary"):
-                role_map = {"موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
-                final_username = new_username.strip() if new_username.strip() else selected_user
+            # --- الفورم للتعديل والاعتماد فقط ---
+            with st.form("edit_user_form"):
+                c1, c2 = st.columns(2)
                 
-                try:
-                    # 1. تحديث جدول المستخدمين (Users)
-                    updates = ["role=%s"]; params = [role_map[new_role_choice]]
-                    if final_username != selected_user:
-                        updates.append("username=%s"); params.append(final_username)
-                    if new_pwd.strip():
-                        updates.append("password=%s"); params.append(new_pwd.strip())
+                new_name = c2.text_input("تعديل اسم الموظف", value=curr_name)
+                new_dept = c1.selectbox("تعديل القسم", COMPANY_DEPARTMENTS, index=COMPANY_DEPARTMENTS.index(curr_dept) if curr_dept in COMPANY_DEPARTMENTS else 0)
+                
+                new_username = c2.text_input("اسم المستخدم الجديد (اتركه لتجاهل التعديل)")
+                new_pwd = c1.text_input("كلمة المرور الجديدة (اتركها لتجاهل التعديل)")
+                
+                new_role_choice = c2.selectbox("الصلاحية الجديدة", role_options, index=role_index)
+                
+                if st.form_submit_button("تحديث البيانات", type="primary"):
+                    role_map = {"موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
+                    final_username = new_username.strip() if new_username.strip() else selected_user
                     
-                    params.append(selected_user)
-                    db_execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=%s", tuple(params))
-                    
-                    # 2. تحديث جدول الموظفين (Employees) بالاسم والقسم الجديد
-                    if curr_emp_id and str(curr_emp_id) not in ['0', 'owner']:
-                        final_name = new_name.strip() if new_name.strip() else curr_name
-                        db_execute("UPDATE Employees SET name=%s, department=%s WHERE emp_id=%s", (final_name, new_dept, curr_emp_id))
+                    try:
+                        updates = ["role=%s"]; params = [role_map[new_role_choice]]
+                        if final_username != selected_user:
+                            updates.append("username=%s"); params.append(final_username)
+                        if new_pwd.strip():
+                            updates.append("password=%s"); params.append(new_pwd.strip())
                         
-                    st.success("تم التحديث بنجاح!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"حدث خطأ: {e}")
+                        params.append(selected_user)
+                        db_execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=%s", tuple(params))
+                        
+                        if curr_emp_id and str(curr_emp_id) not in ['0', 'owner']:
+                            final_name = new_name.strip() if new_name.strip() else curr_name
+                            db_execute("UPDATE Employees SET name=%s, department=%s WHERE emp_id=%s", (final_name, new_dept, curr_emp_id))
+                            
+                        st.success("تم التحديث بنجاح!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"حدث خطأ: {e}")
 
     elif nav == "📍 إدارة المواقع":
         st.header("📍 إضافة فروع ومواقع الشركة (بواسطة الـ GPS)")
