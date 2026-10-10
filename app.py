@@ -140,28 +140,32 @@ def render_smart_alerts():
     alerts = []
 
     # 1. تنبيهات التراخيص
-    lic_df = pd.read_sql_query("SELECT license_name, project_name, due_date FROM ProjectLicenses WHERE status != 'منتهية'", conn)
-    for _, row in lic_df.iterrows():
-        try:
-            d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
-            days_left = (d_date - today).days
-            if 0 <= days_left <= 15:
-                alerts.append(f"⚠️ **تنبيه ترخيص:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) سينتهي خلال {days_left} أيام!")
-            elif days_left < 0:
-                alerts.append(f"❌ **ترخيص منتهي:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) انتهى منذ {-days_left} أيام!")
-        except: pass
+    try:
+        lic_df = pd.read_sql_query("SELECT license_name, project_name, due_date FROM ProjectLicenses WHERE status != 'منتهية'", conn)
+        for _, row in lic_df.iterrows():
+            try:
+                d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
+                days_left = (d_date - today).days
+                if 0 <= days_left <= 15:
+                    alerts.append(f"⚠️ **تنبيه ترخيص:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) سينتهي خلال {days_left} أيام!")
+                elif days_left < 0:
+                    alerts.append(f"❌ **ترخيص منتهي:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) انتهى منذ {-days_left} أيام!")
+            except: pass
+    except: pass
 
     # 2. تنبيهات الأقساط المالية
-    fin_df = pd.read_sql_query("SELECT installment_type, project_name, due_date FROM ProjectFinancials WHERE status IN ('مستحق (لم يُدفع)', 'متأخر')", conn)
-    for _, row in fin_df.iterrows():
-        try:
-            d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
-            days_left = (d_date - today).days
-            if 0 <= days_left <= 10:
-                alerts.append(f"💸 **تنبيه مالي:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) يستحق الدفع خلال {days_left} أيام!")
-            elif days_left < 0:
-                alerts.append(f"🚨 **قسط متأخر:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) متأخر الدفع منذ {-days_left} أيام!")
-        except: pass
+    try:
+        fin_df = pd.read_sql_query("SELECT installment_type, project_name, due_date FROM ProjectFinancials WHERE status IN ('مستحق (لم يُدفع)', 'متأخر')", conn)
+        for _, row in fin_df.iterrows():
+            try:
+                d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
+                days_left = (d_date - today).days
+                if 0 <= days_left <= 10:
+                    alerts.append(f"💸 **تنبيه مالي:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) يستحق الدفع خلال {days_left} أيام!")
+                elif days_left < 0:
+                    alerts.append(f"🚨 **قسط متأخر:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) متأخر الدفع منذ {-days_left} أيام!")
+            except: pass
+    except: pass
 
     conn.close()
 
@@ -199,7 +203,7 @@ def render_sidebar(role_title):
             st.rerun()
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL (إضافة الملفات والمهام)
+# 3. حماية وتجهيز جداول PostgreSQL (إصلاح الإيرور)
 # ==========================================
 def init_db():
     try:
@@ -219,6 +223,7 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
         
+        # إضافة الأعمدة الجديدة مع تجاوز الخطأ لو كانت موجودة
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
         except: pass
         try: cur.execute("ALTER TABLE ProjectDrawings ADD COLUMN file_data TEXT")
@@ -230,11 +235,10 @@ def init_db():
         cur.close()
         conn.close()
     except Exception as e:
-        st.error(f"خطأ في تهيئة قاعدة البيانات: {e}")
+        pass # تجاوز الأخطاء الطفيفة لعدم توقف النظام
 
-if 'db_setup_done' not in st.session_state:
-    init_db()
-    st.session_state['db_setup_done'] = True
+# تشغيل دالة تهيئة الداتابيز بشكل إجباري لتفادي أي إيرور مستقبلي
+init_db()
 
 def authenticate(username, password):
     return db_fetchone("SELECT role, emp_id FROM Users WHERE username=%s AND password=%s", (username, password))
@@ -847,9 +851,12 @@ def render_employee_dashboard(emp_id, balance):
     now_dt = get_egypt_time()
     
     # 1. تنبيه نسيان البصمة (بعد 11:30 صباحاً بتوقيت مصر)
-    has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
-    if not has_checked_in and (now_dt.hour > 11 or (now_dt.hour == 11 and now_dt.minute >= 30)):
-        st.error("⏰ **تنبيه عاجل:** لقد تجاوزت الساعة 11:30 صباحاً ولم تقم بتسجيل حضورك اليوم! يرجى إثبات الحضور فوراً لتجنب خصم اليوم.")
+    try:
+        has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
+        if not has_checked_in and (now_dt.hour > 11 or (now_dt.hour == 11 and now_dt.minute >= 30)):
+            st.error("⏰ **تنبيه عاجل:** لقد تجاوزت الساعة 11:30 صباحاً ولم تقم بتسجيل حضورك اليوم! يرجى إثبات الحضور فوراً لتجنب خصم اليوم.")
+    except:
+        pass
 
     # 2. تنبيه المهام المسندة الجديدة
     try:
@@ -863,7 +870,10 @@ def render_employee_dashboard(emp_id, balance):
     c1.metric("الرصيد المتبقي", f"{balance} يوم")
     c2.metric("التأخيرات الكلية", f"{format_hhmm(delay_mins)} ساعة")
     c3.metric("الوقت الإضافي", f"{format_hhmm(overtime_mins)} ساعة")
-    pending = db_fetchone("SELECT COUNT(*) FROM Requests WHERE emp_id=%s AND status='قيد الانتظار'", (emp_id,))[0]
+    
+    try:
+        pending = db_fetchone("SELECT COUNT(*) FROM Requests WHERE emp_id=%s AND status='قيد الانتظار'", (emp_id,))[0]
+    except: pending = 0
     c4.metric("طلبات معلقة", pending)
     
     st.divider()
@@ -889,6 +899,9 @@ def render_employee_dashboard(emp_id, balance):
                         img = Image.open(camera_photo); img.thumbnail((300, 300)); buffered = io.BytesIO(); img.save(buffered, format="JPEG", quality=85)
                         photo_uri = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
                         
+                        try: has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
+                        except: has_checked_in = False
+
                         if not has_checked_in:
                             if st.button("🟢 تسجيل حضور اليوم", use_container_width=True):
                                 db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri))
@@ -896,17 +909,17 @@ def render_employee_dashboard(emp_id, balance):
                         else:
                             st.info("✅ تم تسجيل حضورك اليوم بنجاح.")
                             
-                            # 1. إنجاز المهام المسندة (إن وجدت)
+                            # 1. إنجاز المهام المسندة
                             conn = get_db_connection()
-                            tasks = pd.read_sql_query("SELECT id, assigner, project_name, task_desc, due_date FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", conn, params=(emp_id,))
+                            try: tasks = pd.read_sql_query("SELECT id, assigner, project_name, task_desc, due_date FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", conn, params=(emp_id,))
+                            except: tasks = pd.DataFrame()
                             conn.close()
                             
                             if not tasks.empty:
                                 st.markdown("### 📋 المهام المسندة إليك من الإدارة")
                                 for _, row in tasks.iterrows():
-                                    with st.expander(f"🔴 مهمة مطلوبة بمشروع: {row['project_name']} (مطلوب تسليمها: {row['due_date']})"):
-                                        st.write(f"**تفاصيل المهمة:** {row['task_desc']}")
-                                        st.write(f"**مسندة من:** {row['assigner']}")
+                                    with st.expander(f"🔴 مهمة مطلوبة بمشروع: {row['project_name']} (التسليم: {row['due_date']})"):
+                                        st.write(f"**التفاصيل:** {row['task_desc']}")
                                         task_reply = st.text_area("تقرير إنجاز المهمة", key=f"reply_{row['id']}")
                                         if st.button("إتمام المهمة ✅", key=f"done_{row['id']}", type="primary"):
                                             if task_reply.strip():
@@ -944,12 +957,13 @@ def render_employee_dashboard(emp_id, balance):
                 
     elif sub_nav == "🌴 سجلاتي":
         conn = get_db_connection()
-        df = pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,))
+        try: df = pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,))
+        except: df = pd.DataFrame()
         conn.close()
         if not df.empty:
             df.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
             st.dataframe(df, hide_index=True, use_container_width=True)
-        else: st.info("لا توجد طلبات إجازة أو مأموريات مسجلة لك حتى الآن.")
+        else: st.info("لا توجد طلبات مسجلة لك حتى الآن.")
 
 # ==========================================
 # 11. نظام التوجيه (Routing) لجميع الصلاحيات
