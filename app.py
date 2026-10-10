@@ -52,7 +52,7 @@ def db_fetchall(query, params=()):
     return res
 
 # ==========================================
-# 2. الإعدادات الأساسية والواجهة (UI/UX) الآمنة
+# 2. الإعدادات الأساسية، الواجهة (UI)، والخلفية
 # ==========================================
 try:
     from streamlit_js_eval import get_geolocation
@@ -62,7 +62,6 @@ except ImportError:
 
 st.set_page_config(page_title="كيان الشرقية للاستثمار العقاري", page_icon="🏗️", layout="wide")
 
-# -------- تصميم آمن ومستقر 100% يتوافق مع الوضع الليلي والنهاري --------
 def apply_custom_theme():
     st.markdown("""
     <style>
@@ -74,7 +73,7 @@ def apply_custom_theme():
             font-family: 'Tajawal', sans-serif !important;
         }
         
-        /* إخفاء قوائم ستريم لت الافتراضية لمنح مساحة أكبر وشكل برمجي خاص */
+        /* إخفاء قوائم ستريم لت الافتراضية لمنح مساحة أكبر */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         
@@ -83,12 +82,33 @@ def apply_custom_theme():
             border-radius: 8px !important;
             font-weight: 700 !important;
             transition: all 0.3s ease !important;
-            border: 1px solid #D4AF37 !important; /* لمسة ذهبية بسيطة */
+            border: 1px solid #D4AF37 !important; /* لمسة ذهبية خفيفة للهوية */
         }
     </style>
     """, unsafe_allow_html=True)
 
+def set_dynamic_background():
+    image_path = "company_bg.webp"
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as f:
+            encoded_string = base64.b64encode(f.read()).decode()
+        st.markdown(
+            f"""
+            <style>
+            .stApp {{
+                /* وضع الصورة كخلفية مع طبقة زرقاء داكنة للحفاظ على وضوح النصوص */
+                background: linear-gradient(rgba(11, 23, 42, 0.85), rgba(11, 23, 42, 0.85)), url(data:image/webp;base64,{encoded_string}) !important;
+                background-size: cover !important;
+                background-position: center !important;
+                background-attachment: fixed !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
 apply_custom_theme()
+set_dynamic_background()
 # ----------------------------------------------
 
 OFFICIAL_IN = '11:00'
@@ -341,7 +361,7 @@ def login_page():
                     st.error("بيانات الدخول غير صحيحة! يرجى المراجعة.")
 
 # ==========================================
-# دالة لوحة القيادة الشاملة (الداشبورد) للمالك
+# دالة لوحة القيادة الشاملة (الداشبورد)
 # ==========================================
 def render_company_dashboard():
     st.header("📊 المؤشرات الحيوية للشركة")
