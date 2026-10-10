@@ -131,7 +131,7 @@ def get_employee_stats(emp_id):
     return res if res else (None, 0.0, "", 0.0)
 
 # ==========================================
-# 4. محرك تحليل الحضور من الإكسيل
+# 4. محرك تحليل الحضور
 # ==========================================
 def process_excel(file):
     try: xls = pd.ExcelFile(file)
@@ -262,19 +262,17 @@ def login_page():
                 else: st.error("بيانات الدخول غير صحيحة!")
 
 # ==========================================
-# دالة موحدة لإنشاء وعرض شيت تقارير البصمة الاحترافي
+# دالة موحدة لإنشاء وعرض شيت تقارير البصمة الشامل
 # ==========================================
 def render_attendance_report(department_filter=None, exclude_emp_id=None):
     conn = get_db_connection()
     
-    # جلب قائمة الموظفين للفلترة
     if department_filter:
         emps = db_fetchall("SELECT name FROM Employees WHERE department=%s", (department_filter,))
     else:
         emps = db_fetchall("SELECT name FROM Employees")
     emp_list = ["الكل"] + [e[0] for e in emps]
     
-    # جلب قائمة الشهور المسجلة
     months = db_fetchall("SELECT DISTINCT substring(date from 1 for 7) FROM WebAttendance")
     month_list = ["الكل"] + [m[0] for m in months if m[0]]
     
@@ -287,7 +285,7 @@ def render_attendance_report(department_filter=None, exclude_emp_id=None):
     if filter_type == "شهر محدد":
         selected_month = c3.selectbox("اختر الشهر:", month_list)
         
-    # استعلام SQL يدمج الحضور والانصراف في سطر واحد لكل يوم
+    # تجميع الحضور والانصراف والتقارير المتعددة في سطر واحد لكل يوم
     query = """
         SELECT 
             w.date AS date_val,
@@ -296,9 +294,9 @@ def render_attendance_report(department_filter=None, exclude_emp_id=None):
             MIN(CASE WHEN w.action = 'حضور' THEN w.time END) AS check_in,
             MAX(CASE WHEN w.action = 'انصراف' THEN w.time END) AS check_out,
             MAX(w.location_name) AS loc,
-            MAX(w.project_name) AS proj,
-            MAX(w.daily_report) AS rep,
-            MAX(w.photo) AS photo
+            STRING_AGG(w.project_name, ' + ') AS proj,
+            STRING_AGG(w.project_name || ': ' || w.daily_report, ' | ') AS rep,
+            MAX(CASE WHEN w.action = 'حضور' THEN w.photo END) AS photo
         FROM WebAttendance w 
         JOIN Employees e ON w.emp_id = e.emp_id 
         WHERE 1=1
@@ -326,26 +324,21 @@ def render_attendance_report(department_filter=None, exclude_emp_id=None):
     conn.close()
     
     if not rep_df.empty:
-        # إضافة اسم اليوم بالعربي وتحسين شكل التاريخ
         rep_df['date_val'] = pd.to_datetime(rep_df['date_val'])
         arabic_days = {'Monday': 'الإثنين', 'Tuesday': 'الثلاثاء', 'Wednesday': 'الأربعاء', 'Thursday': 'الخميس', 'Friday': 'الجمعة', 'Saturday': 'السبت', 'Sunday': 'الأحد'}
         rep_df['اسم اليوم'] = rep_df['date_val'].dt.day_name().map(arabic_days)
         rep_df['التاريخ'] = rep_df['date_val'].dt.strftime('%Y/%m/%d')
         
-        # إعادة ترتيب وتسمية الأعمدة لتناسب شيت الحضور الاحترافي
         final_df = rep_df[['التاريخ', 'اسم اليوم', 'emp_name', 'dept', 'check_in', 'check_out', 'loc', 'proj', 'rep', 'photo']]
-        final_df.columns = ['التاريخ', 'اليوم', 'اسم الموظف', 'القسم', 'الحضور', 'الانصراف', 'موقع البصمة', 'المشروع', 'التقرير اليومي', 'صورة الإثبات']
+        final_df.columns = ['التاريخ', 'اليوم', 'اسم الموظف', 'القسم', 'الحضور', 'الانصراف', 'موقع البصمة', 'المشاريع', 'التقارير اليومية', 'صورة الإثبات']
         
         st.success(f"✅ تم العثور على {len(final_df)} سجل دوام.")
-        
-        # عرض الجدول بشكل أنيق مع إمكانية عرض الصور
         st.dataframe(final_df, use_container_width=True, hide_index=True, column_config={"صورة الإثبات": st.column_config.ImageColumn("صورة الإثبات")})
         
-        # زر التحميل لملف Excel
-        csv_df = final_df.drop(columns=['صورة الإثبات']) # نحذف الصورة لتفادي أخطاء الإكسيل
+        csv_df = final_df.drop(columns=['صورة الإثبات'])
         csv = csv_df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(
-            label="📥 تحميل شيت التقرير (Excel/CSV) لحساب الرواتب", 
+            label="📥 تحميل شيت التقرير (Excel/CSV)", 
             data=csv, 
             file_name=f"Attendance_Sheet_{get_egypt_time().strftime('%Y%m%d')}.csv", 
             mime='text/csv',
@@ -606,7 +599,8 @@ def owner_portal():
     if nav == "📊 تقارير المهام":
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع لعرض المهام:", project_list)
-        reports = pd.read_sql_query("SELECT w.date, e.name, e.department, w.daily_report FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.project_name = %s AND w.action = 'انصراف' ORDER BY w.id DESC", conn, params=(selected_project,))
+        # تعديل الاستعلام ليجلب الإنجازات سواء كانت "انصراف" أو "تقرير" إضافي
+        reports = pd.read_sql_query("SELECT w.date, e.name, e.department, w.daily_report FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.project_name = %s AND w.action IN ('انصراف', 'تقرير') ORDER BY w.id DESC", conn, params=(selected_project,))
         if not reports.empty: 
             reports.columns = ['التاريخ', 'الموظف', 'القسم', 'ما تم إنجازه']
             st.dataframe(reports, use_container_width=True, hide_index=True)
@@ -639,7 +633,7 @@ def owner_portal():
             else: st.info("لا يوجد")
             
     elif nav == "👥 ملخص الإنجازات":
-        summary = pd.read_sql_query("SELECT project_name, COUNT(*) FROM WebAttendance WHERE action='انصراف' AND project_name IS NOT NULL GROUP BY project_name ORDER BY COUNT(*) DESC", conn)
+        summary = pd.read_sql_query("SELECT project_name, COUNT(*) FROM WebAttendance WHERE action IN ('انصراف', 'تقرير') AND project_name IS NOT NULL GROUP BY project_name ORDER BY COUNT(*) DESC", conn)
         if not summary.empty:
             summary.columns = ['اسم المشروع', 'إجمالي المهام']
             st.dataframe(summary, use_container_width=True, hide_index=True)
@@ -730,7 +724,7 @@ def employee_portal():
     render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# 10. الشاشة المشتركة للجميع (البصمة)
+# 10. الشاشة المشتركة للجميع (البصمة وتقارير الإنجاز المتعددة)
 # ==========================================
 def render_employee_dashboard(emp_id, balance):
     month, delay_mins, absent_str, overtime_mins = get_employee_stats(emp_id)
@@ -745,9 +739,9 @@ def render_employee_dashboard(emp_id, balance):
     c4.metric("طلبات معلقة", pending)
     
     st.divider()
-    sub_nav = st.radio("العمليات:", ["📍 بصمة حضور/انصراف", "📝 طلب جديد", "🌴 سجلاتي"], horizontal=True)
+    sub_nav = st.radio("العمليات:", ["📍 بصمة وتقارير الإنجاز", "📝 طلب جديد", "🌴 سجلاتي"], horizontal=True)
     
-    if sub_nav == "📍 بصمة حضور/انصراف":
+    if sub_nav == "📍 بصمة وتقارير الإنجاز":
         locations = db_fetchall("SELECT name, lat, lon, radius FROM Locations")
         if not locations: st.error("لم يتم تسجيل فروع للشركة بعد.")
         elif not GEO_AVAILABLE: st.error("مكتبة Location غير مثبتة.")
@@ -761,8 +755,9 @@ def render_employee_dashboard(emp_id, balance):
                     if dist < min_distance: min_distance, closest_loc_name, is_allowed = dist, l_name, (dist <= l_rad)
                 
                 if is_allowed:
-                    st.success(f"✅ أنت داخل نطاق فرع: {closest_loc_name}")
-                    camera_photo = st.camera_input("التقط صورة")
+                    st.success(f"✅ أنت داخل نطاق: {closest_loc_name}")
+                    camera_photo = st.camera_input("التقط صورة لإثبات الحضور أو الانصراف")
+                    
                     if camera_photo:
                         img = Image.open(camera_photo); img.thumbnail((300, 300)); buffered = io.BytesIO()
                         img.save(buffered, format="JPEG", quality=85)
@@ -773,18 +768,35 @@ def render_employee_dashboard(emp_id, balance):
                                 "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", 
                                 (emp_id, get_egypt_time().strftime("%Y/%m/%d"), get_egypt_time().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri)
                             )
-                            st.success("تم الحضور!")
+                            st.success("تم تسجيل الحضور!")
+                            
                         st.markdown("---")
-                        selected_proj = st.selectbox("المشروع (للانصراف)", [f"اتحاد {i}" for i in range(1, 46)])
-                        daily_rep = st.text_area("التقرير اليومي")
-                        if st.button("🔴 تسجيل انصراف", use_container_width=True):
-                            if daily_rep.strip():
-                                db_execute(
-                                    "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", 
-                                    (emp_id, get_egypt_time().strftime("%Y/%m/%d"), get_egypt_time().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep)
-                                )
-                                st.success("تم الانصراف بنجاح!")
-                            else: st.error("اكتب التقرير أولاً!")
+                        st.markdown("### 📝 إضافة تقارير المشاريع (أثناء اليوم أو عند الانصراف)")
+                        st.info("💡 يمكنك رفع تقرير لمشروع معين والاستمرار في العمل، أو رفع التقرير الأخير وتسجيل الانصراف.")
+                        
+                        selected_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)])
+                        daily_rep = st.text_area("تفاصيل الإنجاز", placeholder="ماذا أنجزت في هذا المشروع؟")
+                        
+                        c_btn1, c_btn2 = st.columns(2)
+                        with c_btn1:
+                            if st.button("➕ رفع التقرير فقط (مستمر بالعمل)", use_container_width=True):
+                                if daily_rep.strip():
+                                    db_execute(
+                                        "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'تقرير', %s, %s, %s, %s, %s)", 
+                                        (emp_id, get_egypt_time().strftime("%Y/%m/%d"), get_egypt_time().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep)
+                                    )
+                                    st.success("تم حفظ إنجازك في هذا المشروع! يمكنك تغيير المشروع وإضافة تقرير آخر.")
+                                else: st.error("اكتب التفاصيل أولاً!")
+                                
+                        with c_btn2:
+                            if st.button("🔴 رفع التقرير + تسجيل انصراف", use_container_width=True):
+                                if daily_rep.strip():
+                                    db_execute(
+                                        "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", 
+                                        (emp_id, get_egypt_time().strftime("%Y/%m/%d"), get_egypt_time().strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep)
+                                    )
+                                    st.success("تم تسجيل الانصراف وحفظ التقرير بنجاح!")
+                                else: st.error("اكتب التفاصيل أولاً!")
                 else: st.error(f"❌ أنت خارج النطاق. أقرب فرع ({closest_loc_name}) يبعد {int(min_distance)} متر.")
             else: st.info("جاري جلب الموقع... يرجى السماح للمتصفح.")
 
