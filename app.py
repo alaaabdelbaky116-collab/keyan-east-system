@@ -82,7 +82,7 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL وتأكيد صلاحيات الأدمن والمالك
+# 3. حماية وتجهيز جداول PostgreSQL
 # ==========================================
 def init_db():
     try:
@@ -269,7 +269,7 @@ def admin_portal():
             st.session_state['logged_in'] = False
             st.rerun()
 
-    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات العامة", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 إدارة المواقع", "📌 التقارير"], horizontal=True)
+    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات العامة", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 إدارة المواقع", "📌 تقارير المناديب بالشهر"], horizontal=True)
     st.divider()
     
     if nav == "📊 تحليل البصمة":
@@ -291,7 +291,9 @@ def admin_portal():
         conn = get_db_connection()
         all_reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, e.department, r.date, r.req_type, r.notes, r.status FROM Requests r LEFT JOIN Employees e ON r.emp_id = e.emp_id ORDER BY r.id DESC LIMIT 50", conn)
         conn.close()
-        if not all_reqs.empty: st.dataframe(all_reqs, use_container_width=True, hide_index=True)
+        if not all_reqs.empty: 
+            all_reqs.columns = ['رقم', 'كود الموظف', 'الاسم', 'القسم', 'التاريخ', 'نوع الطلب', 'السبب', 'الحالة']
+            st.dataframe(all_reqs, use_container_width=True, hide_index=True)
         else: st.info("لا توجد طلبات مسجلة حالياً.")
 
     elif nav == "➕ إنشاء حساب":
@@ -302,8 +304,8 @@ def admin_portal():
             new_user = c2.text_input("اسم المستخدم للدخول")
             new_pwd = c1.text_input("كلمة المرور")
             
-            role_choice = c2.selectbox("صلاحيات الحساب", ["موظف عادي (Employee)", "مدير قسم (Manager)", "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"])
-            role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
+            role_choice = c2.selectbox("صلاحيات الحساب", ["موظف عادي (Employee)", "مدير قسم (Manager)", "مدير إداري (Admin Manager)", "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"])
+            role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
             
             if st.form_submit_button("إنشاء الحساب", type="primary"):
                 try:
@@ -319,7 +321,7 @@ def admin_portal():
         conn.close()
         
         users_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'الصلاحية الحالية']
-        display_map = {"employee": "موظف عادي", "manager": "مدير قسم", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
+        display_map = {"employee": "موظف عادي", "manager": "مدير قسم", "admin_manager": "مدير إداري", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
         users_df['الصلاحية الحالية'] = users_df['الصلاحية الحالية'].map(display_map)
         st.dataframe(users_df, use_container_width=True, hide_index=True)
         
@@ -329,9 +331,9 @@ def admin_portal():
             selected_user = c1.selectbox("اختر الحساب المطلوب تعديله", users_df['اسم المستخدم'].tolist())
             new_username = c2.text_input("اسم المستخدم الجديد (للاحتفاظ به اتركه فارغاً)")
             new_pwd = c1.text_input("كلمة المرور الجديدة (للاحتفاظ بها اتركها فارغة)")
-            new_role_choice = c2.selectbox("الصلاحية الجديدة", ["موظف عادي (Employee)", "مدير قسم (Manager)", "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"])
+            new_role_choice = c2.selectbox("الصلاحية الجديدة", ["موظف عادي (Employee)", "مدير قسم (Manager)", "مدير إداري (Admin Manager)", "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"])
             if st.form_submit_button("تحديث البيانات", type="primary"):
-                role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
+                role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
                 final_username = new_username.strip() if new_username.strip() else selected_user
                 updates, params = ["role=%s"], [role_map[new_role_choice]]
                 if final_username != selected_user:
@@ -345,34 +347,41 @@ def admin_portal():
                 st.success("تم التحديث!")
 
     elif nav == "📍 إدارة المواقع":
-        st.header("📍 إضافة فروع ومواقع الشركة")
+        st.header("📍 إضافة فروع ومواقع الشركة (بواسطة الـ GPS)")
         if not GEO_AVAILABLE:
             st.error("مكتبة 'streamlit-js-eval' غير مثبتة.")
             admin_lat, admin_lon = 0.0, 0.0
         else:
+            c1, c2 = st.columns([3, 1])
+            with c1: st.info("النظام يقوم بقراءة موقعك الجغرافي الحالي. للذهاب لموقع جديد وتسجيله، اذهب للموقع واضغط زر التحديث.")
+            with c2: 
+                if st.button("🔄 تحديث موقعي الآن", use_container_width=True):
+                    st.rerun()
+                    
             loc_admin = get_geolocation()
             admin_lat, admin_lon = 0.0, 0.0
             if loc_admin and isinstance(loc_admin, dict) and 'coords' in loc_admin:
                 admin_lat = float(loc_admin['coords']['latitude'])
                 admin_lon = float(loc_admin['coords']['longitude'])
-                st.success(f"تم التقاط موقعك بنجاح! خط العرض: {admin_lat:.6f} | خط الطول: {admin_lon:.6f}")
+                st.success(f"📍 تم التقاط موقعك بنجاح! خط العرض: {admin_lat:.6f} | خط الطول: {admin_lon:.6f}")
         
         with st.form("add_location_form"):
-            loc_name = st.text_input("اسم الفرع أو الموقع")
+            loc_name = st.text_input("اسم الفرع أو الموقع (مثال: موقع التجمع، مقر الشركة)")
             c1, c2, c3 = st.columns(3)
+            # وضعنا إحداثيات الـ GPS كقيم افتراضية تتحدث تلقائياً
             new_lat = c1.number_input("خط العرض (Latitude)", value=admin_lat, format="%.6f")
             new_lon = c2.number_input("خط الطول (Longitude)", value=admin_lon, format="%.6f")
-            new_rad = c3.number_input("النطاق المسموح (بالمتر)", value=50.0, min_value=10.0)
+            new_rad = c3.number_input("النطاق المسموح (بالمتر)", value=100.0, min_value=10.0)
             
-            if st.form_submit_button("إضافة الموقع", type="primary"):
+            if st.form_submit_button("حفظ الموقع", type="primary"):
                 if loc_name.strip() != "":
                     db_execute("INSERT INTO Locations (name, lat, lon, radius) VALUES (%s, %s, %s, %s)", (loc_name, new_lat, new_lon, new_rad))
-                    st.success("تم إضافة الفرع!")
+                    st.success("تم حفظ الموقع بنجاح!")
                     st.rerun()
-                else: st.error("يرجى كتابة اسم الفرع!")
+                else: st.error("يرجى كتابة اسم الموقع!")
         
         st.divider()
-        st.subheader("الفروع المسجلة")
+        st.subheader("المواقع المسجلة حالياً")
         conn = get_db_connection()
         locations_df = pd.read_sql_query("SELECT id, name, lat, lon, radius FROM Locations", conn)
         conn.close()
@@ -385,26 +394,162 @@ def admin_portal():
                     db_execute("DELETE FROM Locations WHERE name=%s", (loc_to_delete,))
                     st.success("تم الحذف بنجاح!")
                     st.rerun()
-        else:
-            st.info("لم يتم تسجيل أي مواقع حتى الآن.")
 
-    elif nav == "📌 التقارير":
-        st.header("سجل حضور المناديب والتقارير")
+    elif nav == "📌 تقارير المناديب بالشهر":
+        st.header("سجل حضور وتقارير المناديب (الشامل)")
+        
         conn = get_db_connection()
-        today_str = datetime.now().strftime("%Y/%m/%d")
-        try:
-            web_logs = pd.read_sql_query("SELECT e.name, w.location_name, w.time, w.action, w.project_name, w.photo FROM WebAttendance w JOIN Employees e ON w.emp_id = e.emp_id WHERE w.date=%s ORDER BY w.id DESC", conn, params=(today_str,))
-            if not web_logs.empty:
-                web_logs.columns = ['الاسم', 'الفرع', 'الوقت', 'النوع', 'المشروع', 'صورة الموظف']
-                st.dataframe(web_logs, use_container_width=True, hide_index=True, column_config={"صورة الموظف": st.column_config.ImageColumn("صورة الإثبات")})
-            else: st.info("لا توجد سجلات حضور لليوم.")
-        except Exception as e:
-            st.info("لا توجد سجلات حضور بالصور حتى الآن.")
-        finally:
-            conn.close()
+        months = db_fetchall("SELECT DISTINCT substring(date from 1 for 7) FROM WebAttendance")
+        month_list = ["الكل"] + [m[0] for m in months if m[0]]
+        
+        st.write("📌 **أدوات الفلترة والبحث:**")
+        c1, c2 = st.columns(2)
+        filter_type = c1.radio("📅 فترة التقرير:", ["اليوم فقط", "شهر محدد", "كل السجلات"], horizontal=True)
+        
+        selected_month = "الكل"
+        if filter_type == "شهر محدد":
+            selected_month = c2.selectbox("اختر الشهر:", month_list)
+            
+        query = """
+            SELECT e.name, w.date, w.time, w.action, w.location_name, w.project_name, w.daily_report, w.photo 
+            FROM WebAttendance w 
+            JOIN Employees e ON w.emp_id = e.emp_id 
+            WHERE 1=1
+        """
+        params = []
+        
+        if filter_type == "اليوم فقط":
+            query += " AND w.date = %s"
+            params.append(datetime.now().strftime("%Y/%m/%d"))
+        elif filter_type == "شهر محدد" and selected_month != "الكل":
+            query += " AND w.date LIKE %s"
+            params.append(selected_month + "%")
+            
+        query += " ORDER BY w.date DESC, w.id DESC"
+        
+        rep_df = pd.read_sql_query(query, conn, params=tuple(params))
+        conn.close()
+        
+        if not rep_df.empty:
+            rep_df.columns = ['الاسم', 'التاريخ', 'الوقت', 'النوع', 'الفرع/الموقع', 'المشروع', 'التقرير/الإنجاز', 'صورة الإثبات']
+            st.success(f"✅ تم العثور على {len(rep_df)} سجل.")
+            
+            # عرض الجدول مع الصور
+            st.dataframe(rep_df, use_container_width=True, hide_index=True, column_config={"صورة الإثبات": st.column_config.ImageColumn("صورة الإثبات")})
+            
+            # استخراج شيت إكسيل (بدون عمود الصورة لأنه بيعمل مشكلة في الإكسيل)
+            csv_df = rep_df.drop(columns=['صورة الإثبات'])
+            csv = csv_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 تحميل شيت التقرير (Excel/CSV) لحساب الرواتب", 
+                data=csv, 
+                file_name=f"Admin_Reports_{datetime.now().strftime('%Y%m%d')}.csv", 
+                mime='text/csv',
+                type="primary"
+            )
+        else:
+            st.info("لا توجد سجلات تطابق خيارات البحث.")
 
 # ==========================================
-# 7. بوابة مدير القسم (Manager)
+# 7. بوابة المدير الإداري (Admin Manager) - الشاشة الجديدة
+# ==========================================
+def admin_manager_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+    with st.sidebar:
+        try:
+            if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
+        except: pass
+        st.success(f"مرحباً: {st.session_state['username']} (المدير الإداري)")
+        if st.button("تسجيل الخروج", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.rerun()
+
+    nav = st.radio("القائمة:", ["✅ طلبات جميع الموظفين", "📝 تقارير إنجاز الشركة", "👤 لوحتي الشخصية"], horizontal=True)
+    st.divider()
+
+    if nav == "✅ طلبات جميع الموظفين":
+        st.header("إدارة طلبات الموظفين (جميع الأقسام)")
+        conn = get_db_connection()
+        # المدير الإداري بيشوف كل الطلبات اللي قيد الانتظار في الشركة كلها
+        reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, e.department, r.date, r.req_type, r.notes FROM Requests r JOIN Employees e ON r.emp_id = e.emp_id WHERE r.status = 'قيد الانتظار' AND r.emp_id != %s", conn, params=(emp_id,))
+        conn.close()
+        
+        if reqs.empty: st.success("لا توجد طلبات معلقة في الشركة حالياً.")
+        else:
+            for _, row in reqs.iterrows():
+                with st.expander(f"طلب من: {row['name']} (القسم: {row['department']}) - نوع الطلب: {row['req_type']}"):
+                    st.write(f"**تاريخ الطلب:** {row['date']}")
+                    st.write(f"**الملاحظات/السبب:** {row['notes']}")
+                    c1, c2 = st.columns(2)
+                    if c1.button("موافقة واعتماد", key=f"app_{row['id']}", type="primary"):
+                        db_execute("UPDATE Requests SET status='مقبول' WHERE id=%s", (row['id'],))
+                        db_execute("INSERT INTO Permissions VALUES (%s, %s, %s)", (row['emp_id'], row['date'], row['req_type']))
+                        st.success("تم الاعتماد!")
+                        st.rerun()
+                    if c2.button("رفض الطلب", key=f"rej_{row['id']}"):
+                        db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],))
+                        st.warning("تم الرفض!")
+                        st.rerun()
+        
+    elif nav == "📝 تقارير إنجاز الشركة":
+        st.header("تقارير الإنجاز اليومية لجميع الموظفين والمناديب")
+        
+        conn = get_db_connection()
+        emps = db_fetchall("SELECT name FROM Employees")
+        emp_list = ["الكل"] + [e[0] for e in emps]
+        
+        months = db_fetchall("SELECT DISTINCT substring(date from 1 for 7) FROM WebAttendance WHERE action='انصراف'")
+        month_list = ["الكل"] + [m[0] for m in months if m[0]]
+        
+        st.write("📌 **أدوات الفلترة والبحث:**")
+        c1, c2, c3 = st.columns(3)
+        selected_emp = c1.selectbox("👤 بحث باسم الموظف:", emp_list)
+        filter_type = c2.radio("📅 فترة التقرير:", ["اليوم", "شهر محدد", "الكل"], horizontal=True)
+        
+        selected_month = "الكل"
+        if filter_type == "شهر محدد":
+            selected_month = c3.selectbox("اختر الشهر:", month_list)
+            
+        # استعلام شامل لكل الأقسام
+        query = """
+            SELECT w.date, e.name, e.department, w.project_name, w.daily_report 
+            FROM WebAttendance w 
+            JOIN Employees e ON w.emp_id = e.emp_id 
+            WHERE w.action = 'انصراف' AND w.daily_report IS NOT NULL
+        """
+        params = []
+        
+        if selected_emp != "الكل":
+            query += " AND e.name = %s"
+            params.append(selected_emp)
+            
+        if filter_type == "اليوم":
+            query += " AND w.date = %s"
+            params.append(datetime.now().strftime("%Y/%m/%d"))
+        elif filter_type == "شهر محدد" and selected_month != "الكل":
+            query += " AND w.date LIKE %s"
+            params.append(selected_month + "%")
+            
+        query += " ORDER BY w.date DESC, w.id DESC"
+        
+        rep_df = pd.read_sql_query(query, conn, params=tuple(params))
+        conn.close()
+        
+        if not rep_df.empty:
+            rep_df.columns = ['التاريخ', 'الموظف', 'القسم', 'المشروع', 'ما تم إنجازه']
+            st.success(f"✅ تم العثور على {len(rep_df)} تقرير.")
+            st.dataframe(rep_df, use_container_width=True, hide_index=True)
+            csv = rep_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(label="📥 تحميل وطباعة التقرير (Excel/CSV)", data=csv, file_name=f"Company_Reports_{datetime.now().strftime('%Y%m%d')}.csv", mime='text/csv')
+        else:
+            st.info("لا توجد تقارير إنجاز تطابق خيارات البحث.")
+        
+    elif nav == "👤 لوحتي الشخصية":
+        render_employee_dashboard(emp_id, balance)
+
+# ==========================================
+# 8. بوابة مدير القسم (Manager)
 # ==========================================
 def manager_portal():
     emp_id = st.session_state['emp_id']
@@ -413,7 +558,7 @@ def manager_portal():
         try:
             if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
         except: pass
-        st.info(f"مرحباً: {st.session_state['username']}")
+        st.info(f"مرحباً: {st.session_state['username']} (مدير قسم: {emp_dept})")
         if st.button("تسجيل الخروج", use_container_width=True):
             st.session_state['logged_in'] = False
             st.rerun()
@@ -443,6 +588,7 @@ def manager_portal():
     elif nav == "📝 تقارير العمل اليومية":
         st.header(f"تقارير الإنجاز لموظفي قسم: {emp_dept}")
         
+        conn = get_db_connection()
         emps = db_fetchall("SELECT name FROM Employees WHERE department=%s", (emp_dept,))
         emp_list = ["الكل"] + [e[0] for e in emps]
         
@@ -481,7 +627,6 @@ def manager_portal():
             
         query += " ORDER BY w.date DESC, w.id DESC"
         
-        conn = get_db_connection()
         rep_df = pd.read_sql_query(query, conn, params=tuple(params))
         conn.close()
         
@@ -498,7 +643,7 @@ def manager_portal():
         render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# بوابات المالك، الحسابات، التراخيص، والمهندس
+# 9. بوابات المالك، الحسابات، التراخيص، والمهندس
 # ==========================================
 def owner_portal():
     with st.sidebar:
@@ -638,7 +783,7 @@ def employee_portal():
     render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# 8. الشاشة المشتركة للجميع (البصمة)
+# 10. الشاشة المشتركة للجميع (البصمة)
 # ==========================================
 def render_employee_dashboard(emp_id, balance):
     month, delay_mins, absent_str, overtime_mins = get_employee_stats(emp_id)
@@ -714,10 +859,13 @@ def render_employee_dashboard(emp_id, balance):
         else: st.info("لا توجد طلبات.")
 
 # ==========================================
+# 11. نظام التوجيه (Routing) لجميع الصلاحيات
+# ==========================================
 if not st.session_state['logged_in']: login_page()
 else:
     role = st.session_state['role']
     if role == 'admin': admin_portal()
+    elif role == 'admin_manager': admin_manager_portal() # توجيه المدير الإداري الجديد
     elif role == 'manager': manager_portal()
     elif role == 'owner': owner_portal()
     elif role == 'accountant': accountant_portal()
