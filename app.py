@@ -52,7 +52,7 @@ def db_fetchall(query, params=()):
     return res
 
 # ==========================================
-# 2. الإعدادات الأساسية والواجهة (UI/UX)
+# 2. الإعدادات الأساسية والواجهة (UI/UX) الآمنة
 # ==========================================
 try:
     from streamlit_js_eval import get_geolocation
@@ -62,128 +62,29 @@ except ImportError:
 
 st.set_page_config(page_title="كيان الشرقية للاستثمار العقاري", page_icon="🏗️", layout="wide")
 
-# -------- تصميم الواجهة العالمية (Glassmorphism & Corporate Theme) --------
+# -------- تصميم آمن ومستقر 100% يتوافق مع الوضع الليلي والنهاري --------
 def apply_custom_theme():
     st.markdown("""
     <style>
         /* استدعاء خط تجوال العربي الاحترافي */
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap');
         
-        /* تطبيق الخط على كامل المنصة */
+        /* تطبيق الخط على جميع العناصر بأمان */
         html, body, [class*="css"], p, h1, h2, h3, h4, h5, h6, span, div, button, input, select, textarea {
             font-family: 'Tajawal', sans-serif !important;
         }
         
-        /* خلفية النظام - صورة معمارية احترافية مع طبقة زرقاء داكنة */
-        .stApp {
-            background: linear-gradient(rgba(11, 23, 42, 0.85), rgba(11, 23, 42, 0.85)), 
-                        url('https://images.unsplash.com/photo-1541881430813-09be3e3d2315?q=80&w=2000&auto=format&fit=crop') no-repeat center center fixed !important;
-            background-size: cover !important;
-        }
-        
-        /* الحاوية الرئيسية (التأثير الزجاجي الفاخر) */
-        .block-container {
-            background: rgba(255, 255, 255, 0.95) !important;
-            border-radius: 20px !important;
-            padding: 3rem !important;
-            margin-top: 3rem !important;
-            margin-bottom: 3rem !important;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.3) !important;
-            backdrop-filter: blur(10px) !important;
-            border-top: 5px solid #D4AF37 !important; /* لمسة ذهبية من الأعلى */
-        }
-        
-        /* تجميل الأزرار لتناسب الهوية */
-        .stButton>button {
-            background: linear-gradient(135deg, #0B172A 0%, #172B4D 100%) !important;
-            color: #D4AF37 !important; /* خط ذهبي */
-            border-radius: 8px !important;
-            border: 1px solid #D4AF37 !important;
-            padding: 0.5rem 1.5rem !important;
-            font-weight: 800 !important;
-            font-size: 1.1rem !important;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-            transition: all 0.3s ease;
-        }
-        .stButton>button:hover {
-            background: #D4AF37 !important;
-            color: #0B172A !important;
-            box-shadow: 0 8px 15px rgba(212, 175, 55, 0.3);
-            transform: translateY(-2px);
-        }
-        
-        /* تجميل كروت الإحصائيات (Metrics) */
-        div[data-testid="metric-container"] {
-            background-color: #ffffff !important;
-            border-top: 4px solid #D4AF37 !important;
-            border-left: 1px solid #E2E8F0 !important;
-            border-right: 1px solid #E2E8F0 !important;
-            border-bottom: 1px solid #E2E8F0 !important;
-            padding: 20px;
-            border-radius: 12px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-            transition: transform 0.3s ease;
-        }
-        div[data-testid="metric-container"]:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
-        }
-        div[data-testid="stMetricValue"] {
-            font-size: 2.5rem !important;
-            color: #172B4D !important;
-            font-weight: 900 !important;
-        }
-        
-        /* تجميل الشريط الجانبي (Sidebar) */
-        [data-testid="stSidebar"] {
-            background-color: rgba(11, 23, 42, 0.98) !important;
-            border-left: 2px solid #D4AF37 !important;
-        }
-        [data-testid="stSidebar"] * {
-            color: #F8FAFC !important;
-        }
-        
-        /* العناوين الأساسية */
-        h1, h2, h3 {
-            color: #0B172A !important;
-            font-weight: 900 !important;
-            letter-spacing: -0.5px;
-        }
-        
-        /* القوائم والأزرار الراديوية (شكل الأقراص) */
-        div[role="radiogroup"] {
-            gap: 12px;
-            background: #F1F5F9;
-            padding: 8px;
-            border-radius: 12px;
-            display: flex;
-            flex-wrap: wrap;
-        }
-        div[role="radiogroup"] > label {
-            background-color: transparent;
-            padding: 8px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        div[role="radiogroup"] > label[data-checked="true"] {
-            background-color: #172B4D !important;
-            color: white !important;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        
-        /* تجميل الفورم (Form Containers) */
-        [data-testid="stForm"] {
-            background-color: #F8FAFC;
-            border-radius: 15px;
-            border: 1px solid #E2E8F0;
-            padding: 25px;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
-        }
-        
-        /* إخفاء القوائم الافتراضية */
+        /* إخفاء قوائم ستريم لت الافتراضية لمنح مساحة أكبر وشكل برمجي خاص */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
+        
+        /* تجميل بسيط للأزرار لتبدو احترافية دون كسر الهيكل */
+        .stButton>button {
+            border-radius: 8px !important;
+            font-weight: 700 !important;
+            transition: all 0.3s ease !important;
+            border: 1px solid #D4AF37 !important; /* لمسة ذهبية بسيطة */
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -424,7 +325,7 @@ def login_page():
         except:
             pass
         
-        st.markdown("<h1 style='text-align: center; color: #172B4D; font-weight: 900; font-size: 3rem; margin-bottom: 0px;'>كيان الشرقية</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; font-weight: 900; font-size: 3.5rem; margin-bottom: 0px;'>كيان الشرقية</h1>", unsafe_allow_html=True)
         st.markdown("<h4 style='text-align: center; color: #D4AF37; margin-bottom: 30px;'>للمقاولات والاستثمار العقاري - الزقازيق 🏗️</h4>", unsafe_allow_html=True)
         
         with st.form("login_form"):
@@ -469,7 +370,7 @@ def render_company_dashboard():
         proj_df = pd.read_sql_query("SELECT project_name AS \"المشروع\", COUNT(*) AS \"عدد المهام\" FROM WebAttendance WHERE project_name IS NOT NULL AND project_name != '' GROUP BY project_name ORDER BY \"عدد المهام\" DESC LIMIT 7", conn)
         if not proj_df.empty:
             proj_df.set_index("المشروع", inplace=True)
-            st.bar_chart(proj_df, color="#172B4D")
+            st.bar_chart(proj_df)
         else:
             st.info("لا توجد بيانات للمشاريع بعد.")
 
@@ -478,7 +379,7 @@ def render_company_dashboard():
         fin_df = pd.read_sql_query("SELECT status AS \"الحالة\", SUM(amount) AS \"الإجمالي\" FROM ProjectFinancials GROUP BY status", conn)
         if not fin_df.empty:
             fin_df.set_index("الحالة", inplace=True)
-            st.bar_chart(fin_df, color="#D4AF37")
+            st.bar_chart(fin_df)
         else:
             st.info("لا توجد تعاملات مالية مسجلة.")
 
