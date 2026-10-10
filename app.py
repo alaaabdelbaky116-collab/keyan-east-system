@@ -20,7 +20,6 @@ except:
     st.stop()
 
 def get_egypt_time():
-    # ضبط التوقيت الافتراضي للسيستم على توقيت القاهرة دائماً
     return datetime.now(pytz.timezone('Africa/Cairo'))
 
 def get_db_connection():
@@ -53,7 +52,7 @@ def db_fetchall(query, params=()):
     return res
 
 # ==========================================
-# 2. الإعدادات الأساسية
+# 2. الإعدادات الأساسية والأقسام
 # ==========================================
 try:
     from streamlit_js_eval import get_geolocation
@@ -69,6 +68,20 @@ GRACE_PERIOD_MINS = 60
 REQUIRED_HOURS = 7
 DEFAULT_ANNUAL_BALANCE = 21
 LOGO_FILE = "image_c5a585.png"
+
+# قائمة الأقسام المعتمدة في الشركة
+COMPANY_DEPARTMENTS = [
+    "اتش ار (HR)", 
+    "خدمة عملاء", 
+    "تراخيص", 
+    "حسابات", 
+    "عقود قانونية", 
+    "مهندسين مكتب فني", 
+    "مهندسين إدارة وتخطيط", 
+    "مهندسين تنفيذ",
+    "إدارة عليا",
+    "أخرى"
+]
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000 
@@ -388,54 +401,119 @@ def admin_portal():
         else: st.info("لا توجد طلبات مسجلة حالياً.")
 
     elif nav == "➕ إنشاء حساب":
-        st.header("إضافة حساب يدوياً")
+        st.header("إضافة حساب وتحديد القسم")
+        st.info("💡 ملاحظة: إذا اخترت صلاحية 'رئيس قسم / مدير' لموظف، سيتمكن هذا الموظف تلقائياً من رؤية واعتماد طلبات الموظفين التابعين لنفس قسمه.")
+        
         with st.form("new_user"):
             c1, c2 = st.columns(2)
-            new_emp_id = c1.text_input("كود الموظف")
-            new_user = c2.text_input("اسم المستخدم للدخول")
-            new_pwd = c1.text_input("كلمة المرور")
+            new_name = c1.text_input("اسم الموظف الرباعي")
+            new_emp_id = c2.text_input("كود الموظف (ID)")
             
-            role_choice = c2.selectbox("صلاحيات الحساب", ["موظف عادي (Employee)", "مدير قسم (Manager)", "مدير إداري (Admin Manager)", "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"])
-            role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
+            # قائمة الأقسام المحددة
+            new_dept = c1.selectbox("القسم / الإدارة التابع لها", COMPANY_DEPARTMENTS)
+            
+            role_choice = c2.selectbox("صلاحيات الحساب", [
+                "موظف عادي (Employee)", 
+                "رئيس قسم / مدير (Manager)", 
+                "مدير إداري (Admin Manager)", 
+                "مهندس (Engineer)", 
+                "محاسب (Accountant)", 
+                "مسؤول تراخيص (Licensing)", 
+                "مسؤول نظام (Admin)", 
+                "مالك (Owner)"
+            ])
+            
+            new_user = c1.text_input("اسم المستخدم للدخول")
+            new_pwd = c2.text_input("كلمة المرور")
+            
+            role_map = {
+                "موظف عادي (Employee)": "employee", 
+                "رئيس قسم / مدير (Manager)": "manager", 
+                "مدير إداري (Admin Manager)": "admin_manager", 
+                "مهندس (Engineer)": "engineer", 
+                "محاسب (Accountant)": "accountant", 
+                "مسؤول تراخيص (Licensing)": "licensing", 
+                "مسؤول نظام (Admin)": "admin", 
+                "مالك (Owner)": "owner"
+            }
             
             if st.form_submit_button("إنشاء الحساب", type="primary"):
-                try:
-                    db_execute("INSERT INTO Users VALUES (%s, %s, %s, %s)", (new_user, new_pwd, role_map[role_choice], new_emp_id))
-                    st.success("تم الإضافة بنجاح!")
-                except Exception as e:
-                    st.error("اسم المستخدم موجود مسبقاً!")
+                if new_user and new_pwd and new_emp_id and new_name:
+                    try:
+                        # 1. إدخال أو تحديث بيانات الموظف (الاسم والقسم)
+                        db_execute("INSERT INTO Employees (emp_id, name, department, annual_balance) VALUES (%s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department", (new_emp_id, new_name, new_dept, DEFAULT_ANNUAL_BALANCE))
+                        
+                        # 2. إنشاء الحساب وربطه بالموظف
+                        db_execute("INSERT INTO Users (username, password, role, emp_id) VALUES (%s, %s, %s, %s)", (new_user, new_pwd, role_map[role_choice], new_emp_id))
+                        
+                        st.success(f"✅ تم إنشاء حساب ({new_name}) بنجاح! وتم تعيينه في قسم: {new_dept}.")
+                    except Exception as e:
+                        st.error("اسم المستخدم أو كود الموظف مسجل مسبقاً! الرجاء تغييره.")
+                else:
+                    st.error("يرجى تعبئة جميع الحقول المطلوبة أولاً!")
 
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
         conn = get_db_connection()
-        users_df = pd.read_sql_query("SELECT username, password, emp_id, role FROM Users", conn)
+        # جلب البيانات الشاملة للمستخدمين
+        users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id", conn)
         conn.close()
         
-        users_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'الصلاحية الحالية']
-        display_map = {"employee": "موظف عادي", "manager": "مدير قسم", "admin_manager": "مدير إداري", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
-        users_df['الصلاحية الحالية'] = users_df['الصلاحية الحالية'].map(display_map)
-        st.dataframe(users_df, use_container_width=True, hide_index=True)
+        display_df = users_df.copy()
+        display_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'اسم الموظف', 'القسم', 'الصلاحية الحالية']
+        display_map = {"employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", "engineer": "مهندس", "accountant": "محاسب", "licensing": "مسؤول تراخيص", "admin": "مسؤول نظام", "owner": "المالك"}
+        display_df['الصلاحية الحالية'] = display_df['الصلاحية الحالية'].map(display_map)
+        
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
         
         st.divider()
+        st.subheader("تعديل بيانات حساب موجود")
         with st.form("edit_user_form"):
             c1, c2 = st.columns(2)
-            selected_user = c1.selectbox("اختر الحساب المطلوب تعديله", users_df['اسم المستخدم'].tolist())
-            new_username = c2.text_input("اسم المستخدم الجديد (للاحتفاظ به اتركه فارغاً)")
-            new_pwd = c1.text_input("كلمة المرور الجديدة (للاحتفاظ بها اتركها فارغة)")
-            new_role_choice = c2.selectbox("الصلاحية الجديدة", ["موظف عادي (Employee)", "مدير قسم (Manager)", "مدير إداري (Admin Manager)", "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مسؤول نظام (Admin)", "مالك (Owner)"])
+            selected_user = c1.selectbox("اختر الحساب المطلوب تعديله", users_df['username'].tolist())
+            
+            # استخراج بيانات الحساب المحدد لعرضها كقيم افتراضية
+            curr_data = users_df[users_df['username'] == selected_user].iloc[0]
+            curr_emp_id = curr_data['emp_id']
+            curr_name = curr_data['name'] if pd.notna(curr_data['name']) else ""
+            curr_dept = curr_data['department'] if pd.notna(curr_data['department']) and curr_data['department'] in COMPANY_DEPARTMENTS else COMPANY_DEPARTMENTS[0]
+            
+            new_name = c2.text_input("تعديل اسم الموظف", value=curr_name)
+            new_dept = c1.selectbox("تعديل القسم", COMPANY_DEPARTMENTS, index=COMPANY_DEPARTMENTS.index(curr_dept) if curr_dept in COMPANY_DEPARTMENTS else 0)
+            
+            new_username = c2.text_input("اسم المستخدم الجديد (اتركه لتجاهل التعديل)")
+            new_pwd = c1.text_input("كلمة المرور الجديدة (اتركها لتجاهل التعديل)")
+            
+            new_role_choice = c2.selectbox("الصلاحية الجديدة", [
+                "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
+                "مهندس (Engineer)", "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", 
+                "مسؤول نظام (Admin)", "مالك (Owner)"
+            ])
+            
             if st.form_submit_button("تحديث البيانات", type="primary"):
-                role_map = {"موظف عادي (Employee)": "employee", "مدير قسم (Manager)": "manager", "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
+                role_map = {"موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", "مدير إداري (Admin Manager)": "admin_manager", "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"}
                 final_username = new_username.strip() if new_username.strip() else selected_user
-                updates, params = ["role=%s"], [role_map[new_role_choice]]
-                if final_username != selected_user:
-                    updates.append("username=%s")
-                    params.append(final_username)
-                if new_pwd.strip():
-                    updates.append("password=%s")
-                    params.append(new_pwd.strip())
-                params.append(selected_user)
-                db_execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=%s", tuple(params))
-                st.success("تم التحديث!")
+                
+                try:
+                    # 1. تحديث جدول المستخدمين (Users)
+                    updates = ["role=%s"]; params = [role_map[new_role_choice]]
+                    if final_username != selected_user:
+                        updates.append("username=%s"); params.append(final_username)
+                    if new_pwd.strip():
+                        updates.append("password=%s"); params.append(new_pwd.strip())
+                    
+                    params.append(selected_user)
+                    db_execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=%s", tuple(params))
+                    
+                    # 2. تحديث جدول الموظفين (Employees) بالاسم والقسم الجديد
+                    if curr_emp_id and str(curr_emp_id) not in ['0', 'owner']:
+                        final_name = new_name.strip() if new_name.strip() else curr_name
+                        db_execute("UPDATE Employees SET name=%s, department=%s WHERE emp_id=%s", (final_name, new_dept, curr_emp_id))
+                        
+                    st.success("تم التحديث بنجاح!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"حدث خطأ: {e}")
 
     elif nav == "📍 إدارة المواقع":
         st.header("📍 إضافة فروع ومواقع الشركة (بواسطة الـ GPS)")
@@ -538,7 +616,7 @@ def admin_manager_portal():
         render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# 8. بوابة مدير القسم (Manager)
+# 8. بوابة رئيس القسم (Manager)
 # ==========================================
 def manager_portal():
     emp_id = st.session_state['emp_id']
@@ -547,7 +625,7 @@ def manager_portal():
         try:
             if os.path.exists(LOGO_FILE): st.image(LOGO_FILE)
         except: pass
-        st.info(f"مرحباً: {st.session_state['username']} (مدير قسم: {emp_dept})")
+        st.info(f"مرحباً: {st.session_state['username']} (رئيس قسم: {emp_dept})")
         if st.button("تسجيل الخروج", use_container_width=True):
             st.session_state['logged_in'] = False
             st.rerun()
@@ -764,23 +842,20 @@ def render_employee_dashboard(emp_id, balance):
                         today_date = get_egypt_time().strftime("%Y/%m/%d")
                         now_time = get_egypt_time().strftime("%H:%M")
                         
-                        # التحقق الذكي: هل الموظف سجل حضور اليوم؟
                         has_checked_in = db_fetchone(
                             "SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", 
                             (emp_id, today_date)
                         )[0] > 0
                         
                         if not has_checked_in:
-                            # الموظف لم يسجل حضور اليوم -> عرض زر الحضور فقط
                             if st.button("🟢 تسجيل حضور", use_container_width=True):
                                 db_execute(
                                     "INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", 
                                     (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri)
                                 )
                                 st.success("تم تسجيل الحضور بنجاح!")
-                                st.rerun() # تحديث الصفحة لإخفاء الزر فوراً
+                                st.rerun() 
                         else:
-                            # الموظف سجل حضور -> عرض رسالة تأكيد وخيارات التقارير والانصراف
                             st.info("✅ تم تسجيل حضورك اليوم. يمكنك الآن رفع تقارير المشاريع أو تسجيل الانصراف.")
                             st.markdown("---")
                             st.markdown("### 📝 إضافة تقارير المشاريع (أثناء اليوم أو عند الانصراف)")
@@ -807,7 +882,7 @@ def render_employee_dashboard(emp_id, balance):
                                             (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep)
                                         )
                                         st.success("تم تسجيل الانصراف وحفظ التقرير بنجاح!")
-                                        st.rerun() # تحديث الصفحة بعد الانصراف
+                                        st.rerun() 
                                     else: st.error("اكتب التفاصيل أولاً!")
                 else: st.error(f"❌ أنت خارج النطاق. أقرب فرع ({closest_loc_name}) يبعد {int(min_distance)} متر.")
             else: st.info("جاري جلب الموقع... يرجى السماح للمتصفح.")
