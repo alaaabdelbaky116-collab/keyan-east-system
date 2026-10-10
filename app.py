@@ -52,7 +52,7 @@ def db_fetchall(query, params=()):
     return res
 
 # ==========================================
-# 2. الإعدادات الأساسية والأقسام والواجهة (UI)
+# 2. الإعدادات الأساسية والواجهة (UI/UX)
 # ==========================================
 try:
     from streamlit_js_eval import get_geolocation
@@ -60,105 +60,133 @@ try:
 except ImportError:
     GEO_AVAILABLE = False
 
-st.set_page_config(page_title="Keyan-East HR Portal", page_icon="🏢", layout="wide")
+st.set_page_config(page_title="كيان الشرقية للاستثمار العقاري", page_icon="🏗️", layout="wide")
 
-# -------- ثيم الواجهة الاحترافي الجديد --------
+# -------- تصميم الواجهة العالمية (Glassmorphism & Corporate Theme) --------
 def apply_custom_theme():
     st.markdown("""
     <style>
         /* استدعاء خط تجوال العربي الاحترافي */
-        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap');
         
         /* تطبيق الخط على كامل المنصة */
         html, body, [class*="css"], p, h1, h2, h3, h4, h5, h6, span, div, button, input, select, textarea {
             font-family: 'Tajawal', sans-serif !important;
         }
         
-        /* تجميل الأزرار العامة */
+        /* خلفية النظام - صورة معمارية احترافية مع طبقة زرقاء داكنة */
+        .stApp {
+            background: linear-gradient(rgba(11, 23, 42, 0.85), rgba(11, 23, 42, 0.85)), 
+                        url('https://images.unsplash.com/photo-1541881430813-09be3e3d2315?q=80&w=2000&auto=format&fit=crop') no-repeat center center fixed !important;
+            background-size: cover !important;
+        }
+        
+        /* الحاوية الرئيسية (التأثير الزجاجي الفاخر) */
+        .block-container {
+            background: rgba(255, 255, 255, 0.95) !important;
+            border-radius: 20px !important;
+            padding: 3rem !important;
+            margin-top: 3rem !important;
+            margin-bottom: 3rem !important;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.3) !important;
+            backdrop-filter: blur(10px) !important;
+            border-top: 5px solid #D4AF37 !important; /* لمسة ذهبية من الأعلى */
+        }
+        
+        /* تجميل الأزرار لتناسب الهوية */
         .stButton>button {
-            background-color: #0052CC !important;
-            color: white !important;
+            background: linear-gradient(135deg, #0B172A 0%, #172B4D 100%) !important;
+            color: #D4AF37 !important; /* خط ذهبي */
             border-radius: 8px !important;
-            border: none !important;
+            border: 1px solid #D4AF37 !important;
             padding: 0.5rem 1.5rem !important;
-            font-weight: 700 !important;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            font-weight: 800 !important;
+            font-size: 1.1rem !important;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
             transition: all 0.3s ease;
         }
         .stButton>button:hover {
-            background-color: #0747A6 !important;
-            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+            background: #D4AF37 !important;
+            color: #0B172A !important;
+            box-shadow: 0 8px 15px rgba(212, 175, 55, 0.3);
             transform: translateY(-2px);
         }
         
         /* تجميل كروت الإحصائيات (Metrics) */
         div[data-testid="metric-container"] {
-            background-color: #ffffff;
-            border: 1px solid #e1e4e8;
+            background-color: #ffffff !important;
+            border-top: 4px solid #D4AF37 !important;
+            border-left: 1px solid #E2E8F0 !important;
+            border-right: 1px solid #E2E8F0 !important;
+            border-bottom: 1px solid #E2E8F0 !important;
             padding: 20px;
             border-radius: 12px;
-            border-right: 5px solid #0052CC;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
             transition: transform 0.3s ease;
         }
         div[data-testid="metric-container"]:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 6px 12px rgba(0,0,0,0.08);
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
         }
         div[data-testid="stMetricValue"] {
-            font-size: 2.2rem !important;
+            font-size: 2.5rem !important;
             color: #172B4D !important;
-            font-weight: 800 !important;
+            font-weight: 900 !important;
         }
         
         /* تجميل الشريط الجانبي (Sidebar) */
         [data-testid="stSidebar"] {
-            background-color: #172B4D;
-            background-image: linear-gradient(180deg, #172B4D 0%, #0B172A 100%);
-            border-left: 1px solid #2C3E5D;
+            background-color: rgba(11, 23, 42, 0.98) !important;
+            border-left: 2px solid #D4AF37 !important;
         }
         [data-testid="stSidebar"] * {
-            color: #F4F5F7 !important;
+            color: #F8FAFC !important;
         }
         
-        /* تجميل العناوين */
+        /* العناوين الأساسية */
         h1, h2, h3 {
-            color: #172B4D !important;
-            font-weight: 800 !important;
+            color: #0B172A !important;
+            font-weight: 900 !important;
+            letter-spacing: -0.5px;
         }
         
-        /* تجميل القوائم والخيارات الراديو */
+        /* القوائم والأزرار الراديوية (شكل الأقراص) */
         div[role="radiogroup"] {
-            gap: 15px;
+            gap: 12px;
+            background: #F1F5F9;
+            padding: 8px;
+            border-radius: 12px;
+            display: flex;
+            flex-wrap: wrap;
         }
         div[role="radiogroup"] > label {
-            background-color: #F4F5F7;
-            padding: 10px 20px;
+            background-color: transparent;
+            padding: 8px 16px;
             border-radius: 8px;
-            border: 1px solid #DFE1E6;
             cursor: pointer;
-            transition: background-color 0.3s;
+            transition: all 0.3s;
         }
-        div[role="radiogroup"] > label:hover {
-            background-color: #EBECF0;
+        div[role="radiogroup"] > label[data-checked="true"] {
+            background-color: #172B4D !important;
+            color: white !important;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         
         /* تجميل الفورم (Form Containers) */
         [data-testid="stForm"] {
-            background-color: #FAFBFC;
-            border-radius: 12px;
-            border: 1px solid #DFE1E6;
+            background-color: #F8FAFC;
+            border-radius: 15px;
+            border: 1px solid #E2E8F0;
             padding: 25px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
         }
         
-        /* إخفاء القائمة الافتراضية الخاصة بـ Streamlit من فوق للون الاحترافي */
+        /* إخفاء القوائم الافتراضية */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
-# تشغيل الثيم الاحترافي فوراً
 apply_custom_theme()
 # ----------------------------------------------
 
@@ -249,7 +277,7 @@ def get_employee_stats(emp_id):
         return (None, 0.0, "", 0.0)
 
 # ==========================================
-# 4. محرك تحليل الحضور
+# 4. محرك تحليل الحضور من الإكسيل
 # ==========================================
 def process_excel(file):
     try:
@@ -396,18 +424,20 @@ def login_page():
         except:
             pass
         
-        st.markdown("<h2 style='text-align: center; color: #172B4D; margin-bottom: 20px;'>بوابة Keyan-East</h2>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center; color: #172B4D; font-weight: 900; font-size: 3rem; margin-bottom: 0px;'>كيان الشرقية</h1>", unsafe_allow_html=True)
+        st.markdown("<h4 style='text-align: center; color: #D4AF37; margin-bottom: 30px;'>للمقاولات والاستثمار العقاري - الزقازيق 🏗️</h4>", unsafe_allow_html=True)
         
         with st.form("login_form"):
-            user = st.text_input("اسم المستخدم")
-            pwd = st.text_input("كلمة المرور", type="password")
+            user = st.text_input("اسم المستخدم", placeholder="أدخل اسم المستخدم الخاص بك")
+            pwd = st.text_input("كلمة المرور", type="password", placeholder="أدخل كلمة المرور")
+            st.markdown("<br>", unsafe_allow_html=True)
             if st.form_submit_button("تسجيل الدخول", use_container_width=True):
                 user_data = authenticate(user, pwd)
                 if user_data:
                     st.session_state.update({'logged_in': True, 'role': user_data[0], 'emp_id': user_data[1], 'username': user})
                     st.rerun()
                 else:
-                    st.error("بيانات الدخول غير صحيحة!")
+                    st.error("بيانات الدخول غير صحيحة! يرجى المراجعة.")
 
 # ==========================================
 # دالة لوحة القيادة الشاملة (الداشبورد) للمالك
@@ -427,7 +457,7 @@ def render_company_dashboard():
 
     c1.metric("👥 إجمالي الموظفين", total_emps)
     c2.metric("🟢 حضور اليوم", present_today)
-    c3.metric("🔴 لم يسجل حضور اليوم", max(0, total_emps - present_today))
+    c3.metric("🔴 غياب محتمل اليوم", max(0, total_emps - present_today))
     c4.metric("🔔 طلبات معلقة", pending_reqs)
 
     st.divider()
@@ -435,11 +465,11 @@ def render_company_dashboard():
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("🏗️ نشاط المشاريع")
+        st.subheader("🏗️ نشاط المشاريع والأعمال")
         proj_df = pd.read_sql_query("SELECT project_name AS \"المشروع\", COUNT(*) AS \"عدد المهام\" FROM WebAttendance WHERE project_name IS NOT NULL AND project_name != '' GROUP BY project_name ORDER BY \"عدد المهام\" DESC LIMIT 7", conn)
         if not proj_df.empty:
             proj_df.set_index("المشروع", inplace=True)
-            st.bar_chart(proj_df, color="#0052CC")
+            st.bar_chart(proj_df, color="#172B4D")
         else:
             st.info("لا توجد بيانات للمشاريع بعد.")
 
@@ -448,7 +478,7 @@ def render_company_dashboard():
         fin_df = pd.read_sql_query("SELECT status AS \"الحالة\", SUM(amount) AS \"الإجمالي\" FROM ProjectFinancials GROUP BY status", conn)
         if not fin_df.empty:
             fin_df.set_index("الحالة", inplace=True)
-            st.bar_chart(fin_df, color="#FF991F")
+            st.bar_chart(fin_df, color="#D4AF37")
         else:
             st.info("لا توجد تعاملات مالية مسجلة.")
 
@@ -692,7 +722,7 @@ def admin_portal():
                         st.error(f"حدث خطأ: {e}")
 
     elif nav == "📍 المواقع":
-        st.header("إضافة مواقع (بواسطة الـ GPS)")
+        st.header("إضافة مواقع الشركة للمقاولات (بواسطة الـ GPS)")
         if not GEO_AVAILABLE:
             st.error("مكتبة 'streamlit-js-eval' غير مثبتة.")
         else:
@@ -708,7 +738,7 @@ def admin_portal():
                 st.success(f"📍 موقعك الحالي: خط العرض: {admin_lat:.6f} | خط الطول: {admin_lon:.6f}")
         
         with st.form("add_location_form"):
-            loc_name = st.text_input("اسم الفرع")
+            loc_name = st.text_input("اسم الموقع / المشروع (مثال: مشروع القومية، موقع الزراعة)")
             c1, c2, c3 = st.columns(3)
             new_lat = c1.number_input("خط العرض", value=admin_lat, format="%.6f")
             new_lon = c2.number_input("خط الطول", value=admin_lon, format="%.6f")
@@ -767,7 +797,7 @@ def admin_manager_portal():
         conn.close()
         
         if reqs.empty:
-            st.success("لا توجد طلبات معلقة.")
+            st.success("لا توجد طلبات معلقة في الشركة حالياً.")
         else:
             for _, row in reqs.iterrows():
                 with st.expander(f"طلب من: {row['name']} (القسم: {row['department']}) - نوع الطلب: {row['req_type']}"):
@@ -994,9 +1024,9 @@ def render_employee_dashboard(emp_id, balance):
     month, delay_mins, absent_str, overtime_mins = get_employee_stats(emp_id)
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("الرصيد", f"{balance} يوم")
-    c2.metric("تأخيرات", f"{format_hhmm(delay_mins)} ساعة")
-    c3.metric("إضافي", f"{format_hhmm(overtime_mins)} ساعة")
+    c1.metric("الرصيد المتبقي", f"{balance} يوم")
+    c2.metric("التأخيرات الكلية", f"{format_hhmm(delay_mins)} ساعة")
+    c3.metric("الوقت الإضافي", f"{format_hhmm(overtime_mins)} ساعة")
     
     pending = db_fetchone("SELECT COUNT(*) FROM Requests WHERE emp_id=%s AND status='قيد الانتظار'", (emp_id,))[0]
     c4.metric("طلبات معلقة", pending)
@@ -1007,7 +1037,7 @@ def render_employee_dashboard(emp_id, balance):
     if sub_nav == "📍 بصمة وتقارير الإنجاز":
         locations = db_fetchall("SELECT name, lat, lon, radius FROM Locations")
         if not locations:
-            st.error("لم يتم تسجيل فروع للشركة بعد.")
+            st.error("لم يتم تسجيل فروع أو مواقع للشركة بعد.")
         elif not GEO_AVAILABLE:
             st.error("مكتبة Location غير مثبتة.")
         else:
@@ -1041,7 +1071,7 @@ def render_employee_dashboard(emp_id, balance):
                         has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
                         
                         if not has_checked_in:
-                            if st.button("🟢 تسجيل حضور", use_container_width=True):
+                            if st.button("🟢 تسجيل حضور اليوم", use_container_width=True):
                                 db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri))
                                 st.success("تم تسجيل الحضور بنجاح!")
                                 st.rerun() 
@@ -1068,9 +1098,9 @@ def render_employee_dashboard(emp_id, balance):
                                     else:
                                         st.error("اكتب التفاصيل أولاً!")
                 else:
-                    st.error(f"❌ أنت خارج النطاق. أقرب فرع ({closest_loc_name}) يبعد {int(min_distance)} متر.")
+                    st.error(f"❌ أنت خارج النطاق المسموح. أقرب موقع عمل لك هو ({closest_loc_name}) ويبعد عنك بمسافة {int(min_distance)} متر.")
             else:
-                st.info("جاري جلب الموقع... يرجى السماح للمتصفح بالموقع.")
+                st.info("جاري تحديد موقعك الجغرافي... يرجى التأكد من تشغيل وتصريح الـ GPS للمتصفح.")
 
     elif sub_nav == "📝 تقديم طلب جديد":
         with st.form("emp_req"):
@@ -1079,7 +1109,7 @@ def render_employee_dashboard(emp_id, balance):
             notes = st.text_input("السبب أو التفاصيل")
             if st.form_submit_button("إرسال الطلب", type="primary"):
                 db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
-                st.success("تم إرسال الطلب لمديرك المباشر بنجاح!")
+                st.success("تم إرسال الطلب لمديرك المباشر بنجاح، يرجى انتظار الموافقة.")
                 
     elif sub_nav == "🌴 سجلاتي":
         conn = get_db_connection()
@@ -1089,7 +1119,7 @@ def render_employee_dashboard(emp_id, balance):
             df.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
             st.dataframe(df, hide_index=True, use_container_width=True)
         else:
-            st.info("لا توجد طلبات مسجلة لك حتى الآن.")
+            st.info("لا توجد طلبات إجازة أو مأموريات مسجلة لك حتى الآن.")
 
 # ==========================================
 # 11. نظام التوجيه (Routing) لجميع الصلاحيات
