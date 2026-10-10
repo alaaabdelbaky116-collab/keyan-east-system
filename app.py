@@ -132,7 +132,7 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# دالة التنبيهات الذكية (Smart Alerts)
+# دالة التنبيهات الذكية للإدارة (Smart Alerts)
 # ==========================================
 def render_smart_alerts():
     conn = get_db_connection()
@@ -190,7 +190,7 @@ def render_sidebar(role_title):
                 if st.form_submit_button("تحديث الحساب", use_container_width=True):
                     if len(new_pwd) >= 3:
                         db_execute("UPDATE Users SET password=%s WHERE username=%s", (new_pwd, st.session_state['username']))
-                        st.success("تم التغيير بنجاح!")
+                        st.success("تم التغيير بنجاح! احتفظ بها.")
                     else: st.error("كلمة المرور قصيرة جداً.")
                         
         st.divider()
@@ -217,11 +217,8 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectFinancials (id SERIAL PRIMARY KEY, project_name TEXT, installment_type TEXT, amount REAL, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id SERIAL PRIMARY KEY, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
-        
-        # جدول إسناد المهام الجديد
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
         
-        # إضافة أعمدة الملفات لخزنة المستندات (بأمان)
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
         except: pass
         try: cur.execute("ALTER TABLE ProjectDrawings ADD COLUMN file_data TEXT")
@@ -845,6 +842,23 @@ def employee_portal():
 def render_employee_dashboard(emp_id, balance):
     month, delay_mins, absent_str, overtime_mins = get_employee_stats(emp_id)
     
+    # === 🚨 نظام التنبيهات الذكية للموظف ===
+    today_date = get_egypt_time().strftime("%Y/%m/%d")
+    now_dt = get_egypt_time()
+    
+    # 1. تنبيه نسيان البصمة (بعد 11:30 صباحاً بتوقيت مصر)
+    has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
+    if not has_checked_in and (now_dt.hour > 11 or (now_dt.hour == 11 and now_dt.minute >= 30)):
+        st.error("⏰ **تنبيه عاجل:** لقد تجاوزت الساعة 11:30 صباحاً ولم تقم بتسجيل حضورك اليوم! يرجى إثبات الحضور فوراً لتجنب خصم اليوم.")
+
+    # 2. تنبيه المهام المسندة الجديدة
+    try:
+        pending_tasks = db_fetchone("SELECT COUNT(*) FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", (emp_id,))[0]
+        if pending_tasks > 0:
+            st.warning(f"🔔 **تنبيه عمل:** لديك ({pending_tasks}) مهمة مسندة من الإدارة بانتظار إنجازها! راجع قسم 'بصمة وتقارير وإنجاز مهام'.")
+    except: pass
+    # =======================================
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("الرصيد المتبقي", f"{balance} يوم")
     c2.metric("التأخيرات الكلية", f"{format_hhmm(delay_mins)} ساعة")
@@ -874,12 +888,10 @@ def render_employee_dashboard(emp_id, balance):
                     if camera_photo:
                         img = Image.open(camera_photo); img.thumbnail((300, 300)); buffered = io.BytesIO(); img.save(buffered, format="JPEG", quality=85)
                         photo_uri = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
-                        today_date = get_egypt_time().strftime("%Y/%m/%d"); now_time = get_egypt_time().strftime("%H:%M")
                         
-                        has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
                         if not has_checked_in:
                             if st.button("🟢 تسجيل حضور اليوم", use_container_width=True):
-                                db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri))
+                                db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri))
                                 st.success("تم تسجيل الحضور بنجاح!"); st.rerun() 
                         else:
                             st.info("✅ تم تسجيل حضورك اليوم بنجاح.")
@@ -898,28 +910,25 @@ def render_employee_dashboard(emp_id, balance):
                                         task_reply = st.text_area("تقرير إنجاز المهمة", key=f"reply_{row['id']}")
                                         if st.button("إتمام المهمة ✅", key=f"done_{row['id']}", type="primary"):
                                             if task_reply.strip():
-                                                # إغلاق المهمة
                                                 db_execute("UPDATE Tasks SET status='مكتملة', employee_reply=%s WHERE id=%s", (task_reply, row['id']))
-                                                # تسجيلها في البصمة والتقارير تلقائياً
-                                                db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'إنجاز مهمة', %s, %s, %s, %s, %s)", (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri, row['project_name'], "إنجاز مهمة مسندة: " + task_reply))
+                                                db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'إنجاز مهمة', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, row['project_name'], "إنجاز مهمة مسندة: " + task_reply))
                                                 st.success("تم إغلاق المهمة وإرسال التقرير للمدير!"); st.rerun()
                                             else: st.error("اكتب تقرير الإنجاز أولاً!")
                             
                             st.markdown("---")
-                            st.markdown("### 📝 إضافة تقرير حر (اختياري) أو تسجيل انصراف")
+                            st.markdown("### 📝 إضافة تقرير حر أو تسجيل انصراف")
                             selected_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)])
                             daily_rep = st.text_area("تفاصيل الإنجاز الحر", placeholder="ماذا أنجزت اليوم ولم يكن في المهام؟")
                             c_btn1, c_btn2 = st.columns(2)
                             with c_btn1:
                                 if st.button("➕ رفع التقرير الحر (مستمر بالعمل)", use_container_width=True):
                                     if daily_rep.strip():
-                                        db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'تقرير', %s, %s, %s, %s, %s)", (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
+                                        db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'تقرير', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
                                         st.success("تم حفظ إنجازك!")
                                     else: st.error("اكتب التفاصيل أولاً!")
                             with c_btn2:
                                 if st.button("🔴 تسجيل انصراف نهائي اليوم", use_container_width=True):
-                                    # الانصراف ممكن يكون مع أو بدون تقرير
-                                    db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", (emp_id, today_date, now_time, int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
+                                    db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
                                     st.success("تم تسجيل الانصراف بنجاح!"); st.rerun() 
                 else: st.error(f"❌ أنت خارج النطاق المسموح. أقرب موقع عمل لك هو ({closest_loc_name}) ويبعد عنك بمسافة {int(min_distance)} متر.")
             else: st.info("جاري تحديد موقعك الجغرافي... يرجى التأكد من تشغيل وتصريح الـ GPS للمتصفح.")
