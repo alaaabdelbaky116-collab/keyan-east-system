@@ -139,7 +139,6 @@ def render_smart_alerts():
     today = get_egypt_time()
     alerts = []
 
-    # 1. تنبيهات التراخيص
     try:
         lic_df = pd.read_sql_query("SELECT license_name, project_name, due_date FROM ProjectLicenses WHERE status != 'منتهية'", conn)
         for _, row in lic_df.iterrows():
@@ -153,7 +152,6 @@ def render_smart_alerts():
             except: pass
     except: pass
 
-    # 2. تنبيهات الأقساط المالية
     try:
         fin_df = pd.read_sql_query("SELECT installment_type, project_name, due_date FROM ProjectFinancials WHERE status IN ('مستحق (لم يُدفع)', 'متأخر')", conn)
         for _, row in fin_df.iterrows():
@@ -172,10 +170,8 @@ def render_smart_alerts():
     if alerts:
         with st.expander("🔔 اضغط هنا لرؤية التنبيهات الذكية الهامة!", expanded=True):
             for alert in alerts:
-                if '❌' in alert or '🚨' in alert:
-                    st.error(alert)
-                else:
-                    st.warning(alert)
+                if '❌' in alert or '🚨' in alert: st.error(alert)
+                else: st.warning(alert)
 
 # ==========================================
 # دالة الشريط الجانبي وتغيير الباسورد للجميع
@@ -203,7 +199,7 @@ def render_sidebar(role_title):
             st.rerun()
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL (إصلاح الإيرور)
+# 3. حماية وتجهيز جداول PostgreSQL
 # ==========================================
 def init_db():
     try:
@@ -223,7 +219,6 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
         
-        # إضافة الأعمدة الجديدة مع تجاوز الخطأ لو كانت موجودة
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
         except: pass
         try: cur.execute("ALTER TABLE ProjectDrawings ADD COLUMN file_data TEXT")
@@ -234,10 +229,8 @@ def init_db():
             
         cur.close()
         conn.close()
-    except Exception as e:
-        pass # تجاوز الأخطاء الطفيفة لعدم توقف النظام
+    except Exception as e: pass
 
-# تشغيل دالة تهيئة الداتابيز بشكل إجباري لتفادي أي إيرور مستقبلي
 init_db()
 
 def authenticate(username, password):
@@ -739,8 +732,14 @@ def owner_portal():
             for _, row in lic_df.iterrows():
                 with st.expander(f"ترخيص: {row['license_name']} | الحالة: {row['status']}"):
                     st.write(f"تاريخ الانتهاء: {row['due_date']}")
-                    if row['file_data']:
-                        st.download_button("📥 تحميل المستند المرفق", data=base64.b64decode(row['file_data']), file_name=f"{row['license_name']}_doc", mime="application/octet-stream", key=f"dl_lic_{row['license_name']}")
+                    # فحص آمن للداتا قبل فك التشفير لتفادي أي TypeError
+                    file_content = row['file_data']
+                    if file_content and isinstance(file_content, str) and len(file_content) > 10:
+                        try:
+                            decoded_bytes = base64.b64decode(file_content)
+                            st.download_button("📥 تحميل المستند المرفق", data=decoded_bytes, file_name=f"{row['license_name']}_doc.pdf", mime="application/octet-stream", key=f"dl_lic_{row['license_name']}")
+                        except:
+                            st.warning("⚠️ الملف المرفق تالف أو بصيغة غير صالحة للتحميل.")
                     else: st.warning("لم يتم إرفاق ملف لهذا الترخيص.")
         else: st.info("لا يوجد تراخيص")
         
@@ -750,8 +749,14 @@ def owner_portal():
             for _, row in draw_df.iterrows():
                 with st.expander(f"رسم: {row['drawing_name']} | الحالة: {row['status']}"):
                     st.write(f"تاريخ التسليم: {row['due_date']}")
-                    if row['file_data']:
-                        st.download_button("📥 تحميل لوحة الرسم", data=base64.b64decode(row['file_data']), file_name=f"{row['drawing_name']}_draw", mime="application/octet-stream", key=f"dl_drw_{row['drawing_name']}")
+                    # فحص آمن للداتا قبل فك التشفير لتفادي أي TypeError
+                    draw_content = row['file_data']
+                    if draw_content and isinstance(draw_content, str) and len(draw_content) > 10:
+                        try:
+                            decoded_draw = base64.b64decode(draw_content)
+                            st.download_button("📥 تحميل لوحة الرسم", data=decoded_draw, file_name=f"{row['drawing_name']}_draw.pdf", mime="application/octet-stream", key=f"dl_drw_{row['drawing_name']}")
+                        except:
+                            st.warning("⚠️ ملف الرسم المرفق تالف أو بصيغة غير صالحة.")
                     else: st.warning("لم يتم إرفاق ملف للوحة.")
         else: st.info("لا يوجد رسومات")
         conn.close()
@@ -795,7 +800,7 @@ def licensing_portal():
             uploaded_file = st.file_uploader("إرفاق ملف الترخيص (PDF/صورة) - أقل من 5 ميجا", type=['pdf', 'jpg', 'png'])
             
             if st.form_submit_button("تسجيل الترخيص", type="primary") and lic_name:
-                file_b64 = base64.b64encode(uploaded_file.read()).decode() if uploaded_file else ""
+                file_b64 = base64.b64encode(uploaded_file.read()).decode('utf-8') if uploaded_file else ""
                 db_execute("INSERT INTO ProjectLicenses (project_name, license_name, due_date, status, file_data) VALUES (%s, %s, %s, %s, %s)", (proj, lic_name, due_date.strftime("%Y/%m/%d"), status, file_b64))
                 st.success("تم التسجيل ورفع المستند بنجاح!")
                 
@@ -822,7 +827,7 @@ def engineer_portal():
             uploaded_file = st.file_uploader("إرفاق لوحة الرسم (PDF/صورة) - أقل من 5 ميجا", type=['pdf', 'jpg', 'png', 'dwg'])
             
             if st.form_submit_button("تسجيل الرسم", type="primary") and draw_name:
-                file_b64 = base64.b64encode(uploaded_file.read()).decode() if uploaded_file else ""
+                file_b64 = base64.b64encode(uploaded_file.read()).decode('utf-8') if uploaded_file else ""
                 db_execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status, file_data) VALUES (%s, %s, %s, %s, %s)", (proj, draw_name, due_date.strftime("%Y/%m/%d"), status, file_b64))
                 st.success("تم التسجيل ورفع اللوحة بنجاح!")
                 
@@ -850,29 +855,24 @@ def render_employee_dashboard(emp_id, balance):
     today_date = get_egypt_time().strftime("%Y/%m/%d")
     now_dt = get_egypt_time()
     
-    # 1. تنبيه نسيان البصمة (بعد 11:30 صباحاً بتوقيت مصر)
     try:
         has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
         if not has_checked_in and (now_dt.hour > 11 or (now_dt.hour == 11 and now_dt.minute >= 30)):
             st.error("⏰ **تنبيه عاجل:** لقد تجاوزت الساعة 11:30 صباحاً ولم تقم بتسجيل حضورك اليوم! يرجى إثبات الحضور فوراً لتجنب خصم اليوم.")
-    except:
-        pass
+    except: pass
 
-    # 2. تنبيه المهام المسندة الجديدة
     try:
         pending_tasks = db_fetchone("SELECT COUNT(*) FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", (emp_id,))[0]
         if pending_tasks > 0:
             st.warning(f"🔔 **تنبيه عمل:** لديك ({pending_tasks}) مهمة مسندة من الإدارة بانتظار إنجازها! راجع قسم 'بصمة وتقارير وإنجاز مهام'.")
     except: pass
-    # =======================================
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("الرصيد المتبقي", f"{balance} يوم")
     c2.metric("التأخيرات الكلية", f"{format_hhmm(delay_mins)} ساعة")
     c3.metric("الوقت الإضافي", f"{format_hhmm(overtime_mins)} ساعة")
     
-    try:
-        pending = db_fetchone("SELECT COUNT(*) FROM Requests WHERE emp_id=%s AND status='قيد الانتظار'", (emp_id,))[0]
+    try: pending = db_fetchone("SELECT COUNT(*) FROM Requests WHERE emp_id=%s AND status='قيد الانتظار'", (emp_id,))[0]
     except: pending = 0
     c4.metric("طلبات معلقة", pending)
     
@@ -909,7 +909,6 @@ def render_employee_dashboard(emp_id, balance):
                         else:
                             st.info("✅ تم تسجيل حضورك اليوم بنجاح.")
                             
-                            # 1. إنجاز المهام المسندة
                             conn = get_db_connection()
                             try: tasks = pd.read_sql_query("SELECT id, assigner, project_name, task_desc, due_date FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", conn, params=(emp_id,))
                             except: tasks = pd.DataFrame()
@@ -963,7 +962,7 @@ def render_employee_dashboard(emp_id, balance):
         if not df.empty:
             df.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
             st.dataframe(df, hide_index=True, use_container_width=True)
-        else: st.info("لا توجد طلبات مسجلة لك حتى الآن.")
+        else: st.info("لا توجد طلبات إجازة أو مأموريات مسجلة لك حتى الآن.")
 
 # ==========================================
 # 11. نظام التوجيه (Routing) لجميع الصلاحيات
