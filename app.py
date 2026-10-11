@@ -111,14 +111,12 @@ REQUIRED_HOURS = 7
 DEFAULT_ANNUAL_BALANCE = 21
 LOGO_FILE = "image_c5a585.png"
 
-# تحديث الأقسام لإضافة إدارة المستخلصات وإدارة الـ IT
 COMPANY_DEPARTMENTS = [
     "اتش ار (HR)", "خدمة عملاء", "تراخيص", "حسابات", "عقود قانونية", 
     "مهندسين مكتب فني", "مهندسين إدارة وتخطيط", "مهندسين تنفيذ", 
     "إدارة المستخلصات", "إدارة الـ IT", "إدارة عليا", "أخرى"
 ]
 
-# تحديث قوائم الصلاحيات لدمج كل التخصصات
 ROLE_OPTIONS = [
     "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
     "موارد بشرية (HR)", "مهندس (Engineer)", "مهندس مستخلصات (Extracts Engineer)", 
@@ -550,7 +548,7 @@ def render_manage_extracts():
     conn.close()
 
 # ==========================================
-# 6. بوابة الإدارة (Admin / IT)
+# 6. بوابة الإدارة (Admin / IT) + حذف الحسابات
 # ==========================================
 def admin_portal():
     render_sidebar("الإدارة التكنولوجية (IT/Admin)")
@@ -638,6 +636,23 @@ def admin_portal():
                             db_execute("UPDATE Employees SET name=%s, department=%s WHERE emp_id=%s", (new_name.strip() if new_name.strip() else curr_name, new_dept, curr_emp_id))
                         st.success("تم التحديث بنجاح!"); st.rerun()
                     except Exception as e: st.error(f"حدث خطأ: {e}")
+
+            # --- إضافة قسم مسح الحسابات الجديد والمحمي ---
+            st.divider()
+            st.subheader("🗑️ حذف حساب نهائياً")
+            st.warning("⚠️ سيتم مسح بيانات الدخول لمنع الموظف من الدخول مجدداً (مع الاحتفاظ بتاريخ بصماته).")
+            with st.form("delete_user_form"):
+                user_to_delete = st.selectbox("اختر اسم المستخدم المراد حذفه:", users_df['username'].tolist())
+                if st.form_submit_button("إيقاف وحذف الحساب 🗑️", type="primary"):
+                    if user_to_delete.lower() in ['admin', 'owner']:
+                        st.error("❌ حماية النظام: لا يمكن حذف الحسابات الإدارية الأساسية (Admin / Owner)!")
+                    else:
+                        emp_id_to_del = users_df[users_df['username'] == user_to_delete].iloc[0]['emp_id']
+                        db_execute("DELETE FROM Users WHERE username=%s", (user_to_delete,))
+                        if emp_id_to_del and str(emp_id_to_del) not in ['0', 'owner']:
+                            db_execute("DELETE FROM Employees WHERE emp_id=%s", (emp_id_to_del,))
+                        st.success(f"تم مسح الحساب ({user_to_delete}) بنجاح ولن يتمكن من الدخول مجدداً!")
+                        st.rerun()
 
     elif nav == "📍 المواقع":
         st.header("إضافة مواقع الشركة للمقاولات (بواسطة الـ GPS)")
@@ -913,7 +928,6 @@ def engineer_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("المهندس")
-    # تم إزالة إنشاء مستخلص من هنا ليصبح حصرياً لمهندس المستخلصات
     nav = st.radio("القائمة:", ["📐 الرسومات (خزنة الملفات)", "👤 لوحتي الشخصية"], horizontal=True)
     if nav == "📐 الرسومات (خزنة الملفات)":
         with st.form("add_draw"):
@@ -938,7 +952,7 @@ def engineer_portal():
     else: render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# بوابة مهندس المستخلصات (Extracts Engineer) - بوابة جديدة
+# بوابة مهندس المستخلصات (Extracts Engineer)
 # ==========================================
 def extracts_engineer_portal():
     emp_id = st.session_state['emp_id']
@@ -1112,6 +1126,6 @@ else:
     elif role == 'accountant': accountant_portal()
     elif role == 'licensing': licensing_portal()
     elif role == 'engineer': engineer_portal()
-    elif role == 'extracts_engineer': extracts_engineer_portal() # توجيه مهندس المستخلصات
+    elif role == 'extracts_engineer': extracts_engineer_portal() 
     elif role == 'hr': hr_portal()
     else: employee_portal()
