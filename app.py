@@ -10,7 +10,6 @@ import os
 import psycopg2
 import pytz
 import plotly.express as px
-import time
 
 # ==========================================
 # 1. الاتصال بقاعدة البيانات وتوقيت مصر
@@ -113,36 +112,39 @@ DEFAULT_ANNUAL_BALANCE = 21
 LOGO_FILE = "image_c5a585.png"
 
 COMPANY_DEPARTMENTS = [
-    "اتش ار (HR)", "مبيعات وخدمة عملاء", "تراخيص", "حسابات", "عقود قانونية", 
+    "اتش ار (HR)", "خدمة عملاء", "تراخيص", "حسابات", "عقود قانونية", 
     "مهندسين مكتب فني", "مهندسين إدارة وتخطيط", "مهندسين تنفيذ", 
     "إدارة المستخلصات", "إدارة الـ IT", "إدارة عليا", "أخرى"
 ]
 
 ROLE_OPTIONS = [
     "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
-    "موارد بشرية (HR)", "مبيعات وخدمة عملاء (Sales)", "مهندس (Engineer)", 
-    "مهندس إدارة وتخطيط (Planning Engineer)", "مهندس مستخلصات (Extracts Engineer)", 
-    "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", 
-    "مسؤول نظام (Admin)", "مالك (Owner)"
+    "موارد بشرية (HR)", "مهندس (Engineer)", "مهندس إدارة وتخطيط (Planning Engineer)",
+    "مهندس مستخلصات (Extracts Engineer)", "محاسب (Accountant)", 
+    "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", "مسؤول نظام (Admin)", "مالك (Owner)"
 ]
 
 ROLE_MAP = {
-    "موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", 
-    "مدير إداري (Admin Manager)": "admin_manager", "موارد بشرية (HR)": "hr", 
-    "مبيعات وخدمة عملاء (Sales)": "sales", "مهندس (Engineer)": "engineer", 
+    "موظف عادي (Employee)": "employee", 
+    "رئيس قسم / مدير (Manager)": "manager", 
+    "مدير إداري (Admin Manager)": "admin_manager", 
+    "موارد بشرية (HR)": "hr", 
+    "مهندس (Engineer)": "engineer", 
     "مهندس إدارة وتخطيط (Planning Engineer)": "planning_engineer",
-    "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer", "محاسب (Accountant)": "accountant", 
-    "مسؤول تراخيص (Licensing)": "licensing", "مهندس IT (IT)": "it", 
-    "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"
+    "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer",
+    "محاسب (Accountant)": "accountant", 
+    "مسؤول تراخيص (Licensing)": "licensing", 
+    "مهندس IT (IT)": "it", 
+    "مسؤول نظام (Admin)": "admin", 
+    "مالك (Owner)": "owner"
 }
 
 ROLE_REVERSE_MAP = {v: k for k, v in ROLE_MAP.items()}
 DISPLAY_MAP = {
     "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
-    "hr": "موارد بشرية", "sales": "مبيعات وخدمة عملاء", "engineer": "مهندس", 
-    "planning_engineer": "مهندس إدارة وتخطيط", "extracts_engineer": "مهندس مستخلصات", 
-    "accountant": "محاسب", "licensing": "مسؤول تراخيص", "it": "مهندس IT", 
-    "admin": "مسؤول نظام", "owner": "المالك"
+    "hr": "موارد بشرية", "engineer": "مهندس", "planning_engineer": "مهندس إدارة وتخطيط",
+    "extracts_engineer": "مهندس مستخلصات", "accountant": "محاسب", 
+    "licensing": "مسؤول تراخيص", "it": "مهندس IT", "admin": "مسؤول نظام", "owner": "المالك"
 }
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -161,7 +163,7 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# دالة التنبيهات الذكية للإدارة (Smart Alerts via AI)
+# دالة التنبيهات الذكية للإدارة (Smart Alerts)
 # ==========================================
 def render_smart_alerts():
     conn = get_db_connection()
@@ -175,9 +177,9 @@ def render_smart_alerts():
                 d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
                 days_left = (d_date - today).days
                 if 0 <= days_left <= 15:
-                    alerts.append(f"🤖 **الوكيل الآلي يُنبه:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) سينتهي خلال {days_left} أيام!")
+                    alerts.append(f"⚠️ **تنبيه ترخيص:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) سينتهي خلال {days_left} أيام!")
                 elif days_left < 0:
-                    alerts.append(f"🤖 **الوكيل الآلي يُحذر:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) انتهى منذ {-days_left} أيام!")
+                    alerts.append(f"❌ **ترخيص منتهي:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) انتهى منذ {-days_left} أيام!")
             except: pass
     except: pass
 
@@ -188,18 +190,18 @@ def render_smart_alerts():
                 d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
                 days_left = (d_date - today).days
                 if 0 <= days_left <= 10:
-                    alerts.append(f"🤖 **الوكيل الآلي يُنبه:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) يستحق الدفع خلال {days_left} أيام!")
+                    alerts.append(f"💸 **تنبيه مالي:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) يستحق الدفع خلال {days_left} أيام!")
                 elif days_left < 0:
-                    alerts.append(f"🤖 **الوكيل الآلي يُحذر:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) متأخر الدفع منذ {-days_left} أيام!")
+                    alerts.append(f"🚨 **قسط متأخر:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) متأخر الدفع منذ {-days_left} أيام!")
             except: pass
     except: pass
 
     conn.close()
 
     if alerts:
-        with st.expander("🔔 اضغط هنا لرؤية تنبيهات الوكيل الآلي الهامة!", expanded=True):
+        with st.expander("🔔 اضغط هنا لرؤية التنبيهات الذكية الهامة!", expanded=True):
             for alert in alerts:
-                if 'يُحذر' in alert: st.error(alert)
+                if '❌' in alert or '🚨' in alert: st.error(alert)
                 else: st.warning(alert)
 
 # ==========================================
@@ -237,7 +239,7 @@ def init_db():
         cur = conn.cursor()
         
         cur.execute('''CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, role TEXT, emp_id TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS Employees (emp_id TEXT PRIMARY KEY, name TEXT, department TEXT, annual_balance INTEGER, phone TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Employees (emp_id TEXT PRIMARY KEY, name TEXT, department TEXT, annual_balance INTEGER)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Permissions (emp_id TEXT, date TEXT, type TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Requests (id SERIAL PRIMARY KEY, emp_id TEXT, date TEXT, req_type TEXT, notes TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
@@ -249,14 +251,9 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT)''')
         
-        # جدول العملاء الجديد (المبيعات وخدمة العملاء)
-        cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, client_name TEXT, client_phone TEXT, project_interest TEXT, status TEXT, follow_up_notes TEXT, created_by TEXT, date TEXT)''')
-        
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
         except: pass
         try: cur.execute("ALTER TABLE ProjectDrawings ADD COLUMN file_data TEXT")
-        except: pass
-        try: cur.execute("ALTER TABLE Employees ADD COLUMN phone TEXT")
         except: pass
             
         cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('admin', 'admin123', 'admin', '0') ON CONFLICT (username) DO UPDATE SET role='admin'")
@@ -395,39 +392,7 @@ def login_page():
                 else: st.error("بيانات الدخول غير صحيحة! يرجى المراجعة.")
 
 # ==========================================
-# دالة الوكيل الآلي
-# ==========================================
-def render_ai_agent():
-    st.header("🤖 إدارة الوكيل الآلي (AI & WhatsApp Agent)")
-    st.info("الوكيل الآلي متصل بقاعدة البيانات لتقديم إحصائيات وإرسال إشعارات تلقائية لتسريع سير العمل.")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("### ⚙️ إعدادات الربط التلقائي")
-        st.toggle("✅ إرسال مهام العمل للموظفين عبر الواتساب", value=True, disabled=True)
-        st.toggle("✅ إرسال تنبيهات الأقساط والتراخيص للمالك", value=True, disabled=True)
-        if st.button("🔄 اختبار الاتصال بسيرفر الإشعارات", type="primary"):
-            with st.spinner("جاري الاتصال..."):
-                time.sleep(1.5)
-                st.toast("تم الاتصال بنجاح بـ السيرفر! 🟢", icon="✅")
-                st.success("حالة الاتصال: نشط ومستقر.")
-    
-    with c2:
-        st.markdown("### 💬 التحدث مع الوكيل الآلي")
-        if "ai_messages" not in st.session_state:
-            st.session_state.ai_messages = [{"role": "assistant", "content": "أهلاً بك! أنا الوكيل الآلي لكيان الشرقية. جاهز لإرسال الإشعارات وقراءة تقارير النظام. كيف أساعدك؟"}]
-        
-        chat_container = st.container(height=250)
-        with chat_container:
-            for msg in st.session_state.ai_messages:
-                st.chat_message(msg["role"]).write(msg["content"])
-                
-        if prompt := st.chat_input("اكتب أمرك للوكيل الآلي..."):
-            st.session_state.ai_messages.append({"role": "user", "content": prompt})
-            st.rerun()
-
-# ==========================================
-# دالة لوحة القيادة الشاملة
+# دالة لوحة القيادة الشاملة (الداشبورد المودرن)
 # ==========================================
 def render_company_dashboard():
     st.header("📊 المؤشرات الحيوية والتفاعلية للشركة")
@@ -527,14 +492,14 @@ def render_attendance_report(department_filter=None):
     else: st.info("لا توجد سجلات تطابق خيارات البحث.")
 
 # ==========================================
-# دالة مهام القسم
+# دالة مهام القسم (إسناد المهام للمديرين)
 # ==========================================
 def render_task_delegation(department):
     st.header("📋 إسناد مهام للموظفين (Task Delegation)")
-    st.info("💡 المهام ستظهر للموظف في لوحته الشخصية، وسيتم إشعاره عبر الواتساب فور إرسالها (في حال وجود رقم مسجل).")
+    st.info("💡 المهام التي يتم إسنادها هنا ستظهر مباشرة للموظف في لوحته الشخصية ليقوم بتنفيذها وتقديم التقرير عليها.")
     conn = get_db_connection()
-    if department == "الكل": emps = pd.read_sql_query("SELECT emp_id, name, phone FROM Employees", conn)
-    else: emps = pd.read_sql_query("SELECT emp_id, name, phone FROM Employees WHERE department=%s", conn, params=(department,))
+    if department == "الكل": emps = pd.read_sql_query("SELECT emp_id, name FROM Employees", conn)
+    else: emps = pd.read_sql_query("SELECT emp_id, name FROM Employees WHERE department=%s", conn, params=(department,))
     conn.close()
     
     with st.form("assign_task_form"):
@@ -546,22 +511,14 @@ def render_task_delegation(department):
         
         if st.form_submit_button("إرسال المهمة الآن 🚀", type="primary"):
             if selected_emp != "لا يوجد موظفين" and task_desc.strip():
-                emp_data = emps[emps['name'] == selected_emp].iloc[0]
-                emp_id_selected = emp_data['emp_id']
-                emp_phone = emp_data['phone']
-                
+                emp_id_selected = emps[emps['name'] == selected_emp].iloc[0]['emp_id']
                 db_execute("INSERT INTO Tasks (emp_id, assigner, project_name, task_desc, assign_date, due_date, status) VALUES (%s, %s, %s, %s, %s, %s, 'قيد التنفيذ')",
                            (emp_id_selected, st.session_state['username'], proj, task_desc, get_egypt_time().strftime("%Y/%m/%d"), due_date.strftime("%Y/%m/%d")))
                 st.success("تم إسناد المهمة للموظف بنجاح!")
-                
-                if emp_phone and len(str(emp_phone)) > 8:
-                    st.toast(f"🤖 الوكيل الآلي: تم إرسال رسالة للموظف على الواتساب ({emp_phone}) بتفاصيل المهمة!", icon="📲")
-                else:
-                    st.toast(f"🤖 الوكيل الآلي: الموظف مسند إليه المهمة بالنظام، لكن لا يوجد رقم واتساب مسجل له لإشعاره!", icon="⚠️")
             else: st.error("يرجى كتابة تفاصيل المهمة وتحديد الموظف.")
 
 # ==========================================
-# دالة موحدة لإدارة المستخلصات
+# دالة موحدة لإدارة المستخلصات للمديرين والحسابات (وتخطيط)
 # ==========================================
 def render_manage_extracts():
     st.header("📄 إدارة ومراجعة المستخلصات الهندسية")
@@ -570,6 +527,8 @@ def render_manage_extracts():
     emp_id = st.session_state.get('emp_id')
     _, emp_dept, _ = get_employee_info(emp_id)
     role = st.session_state.get('role', '')
+    
+    # تحديد إذا كان المستخدم مهندس إدارة وتخطيط (عن طريق الدور أو القسم)
     is_planning_auth = (role == 'planning_engineer') or (emp_dept == "مهندسين إدارة وتخطيط")
 
     try:
@@ -588,6 +547,7 @@ def render_manage_extracts():
                     
                     c1, c2, c3 = st.columns(3)
                     
+                    # عرض أزرار المراجعة الفنية فقط لمهندس التخطيط، والمراجعة المالية للحسابات والإدارة
                     if is_planning_auth:
                         if c1.button("✅ اعتماد فني وهندسي", key=f"eng_app_{row['id']}", type="primary"):
                             db_execute("UPDATE Extracts SET status='معتمد هندسياً (للحسابات)' WHERE id=%s", (row['id'],)); st.rerun()
@@ -611,7 +571,7 @@ def render_manage_extracts():
 # ==========================================
 def admin_portal():
     render_sidebar("الإدارة التكنولوجية (IT/Admin)")
-    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 المواقع", "📌 تقارير المناديب", "🤖 الوكيل الآلي", "💾 النسخ الاحتياطي"], horizontal=True)
+    nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 المواقع", "📌 تقارير المناديب", "💾 النسخ الاحتياطي"], horizontal=True)
     st.divider()
     
     if nav == "📊 تحليل البصمة":
@@ -643,12 +603,11 @@ def admin_portal():
             role_choice = c2.selectbox("صلاحيات الحساب", ROLE_OPTIONS)
             new_user = c1.text_input("اسم المستخدم للدخول")
             new_pwd = c2.text_input("كلمة المرور")
-            new_phone = c1.text_input("رقم الواتساب (مهم للإشعارات والمهام)")
             
             if st.form_submit_button("إنشاء الحساب", type="primary"):
                 if new_user and new_pwd and new_emp_id and new_name:
                     try:
-                        db_execute("INSERT INTO Employees (emp_id, name, department, annual_balance, phone) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department, phone=EXCLUDED.phone", (new_emp_id, new_name, new_dept, DEFAULT_ANNUAL_BALANCE, new_phone))
+                        db_execute("INSERT INTO Employees (emp_id, name, department, annual_balance) VALUES (%s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department", (new_emp_id, new_name, new_dept, DEFAULT_ANNUAL_BALANCE))
                         db_execute("INSERT INTO Users (username, password, role, emp_id) VALUES (%s, %s, %s, %s)", (new_user, new_pwd, ROLE_MAP[role_choice], new_emp_id))
                         st.success(f"تم إنشاء حساب ({new_name}) بنجاح!")
                     except: st.error("اسم المستخدم مسجل مسبقاً!")
@@ -656,12 +615,12 @@ def admin_portal():
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
         conn = get_db_connection()
-        users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, e.phone, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id", conn)
+        users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id", conn)
         conn.close()
         
         if not users_df.empty:
             display_df = users_df.copy()
-            display_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'اسم الموظف', 'القسم', 'رقم الواتساب', 'الصلاحية الحالية']
+            display_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'اسم الموظف', 'القسم', 'الصلاحية الحالية']
             display_df['الصلاحية الحالية'] = display_df['الصلاحية الحالية'].map(DISPLAY_MAP)
             st.dataframe(display_df, use_container_width=True, hide_index=True)
             
@@ -672,7 +631,6 @@ def admin_portal():
             curr_emp_id = curr_data['emp_id']
             curr_name = curr_data['name'] if pd.notna(curr_data['name']) else ""
             curr_dept = curr_data['department'] if pd.notna(curr_data['department']) and curr_data['department'] in COMPANY_DEPARTMENTS else COMPANY_DEPARTMENTS[0]
-            curr_phone = curr_data['phone'] if pd.notna(curr_data['phone']) else ""
             curr_role = curr_data['role']
             
             default_role_text = ROLE_REVERSE_MAP.get(curr_role, "موظف عادي (Employee)")
@@ -685,8 +643,6 @@ def admin_portal():
                 new_username = c2.text_input("اسم المستخدم الجديد")
                 new_pwd = c1.text_input("كلمة المرور الجديدة")
                 new_role_choice = c2.selectbox("الصلاحية الجديدة", ROLE_OPTIONS, index=role_index)
-                edit_phone = c1.text_input("تعديل رقم الواتساب", value=curr_phone)
-                
                 if st.form_submit_button("تحديث البيانات", type="primary"):
                     final_username = new_username.strip() if new_username.strip() else selected_user
                     try:
@@ -696,7 +652,7 @@ def admin_portal():
                         params.append(selected_user)
                         db_execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=%s", tuple(params))
                         if curr_emp_id and str(curr_emp_id) not in ['0', 'owner']:
-                            db_execute("UPDATE Employees SET name=%s, department=%s, phone=%s WHERE emp_id=%s", (new_name.strip() if new_name.strip() else curr_name, new_dept, edit_phone, curr_emp_id))
+                            db_execute("UPDATE Employees SET name=%s, department=%s WHERE emp_id=%s", (new_name.strip() if new_name.strip() else curr_name, new_dept, curr_emp_id))
                         st.success("تم التحديث بنجاح!"); st.rerun()
                     except Exception as e: st.error(f"حدث خطأ: {e}")
 
@@ -753,9 +709,6 @@ def admin_portal():
         st.header("شيت الحضور والانصراف المجمع")
         render_attendance_report()
         
-    elif nav == "🤖 الوكيل الآلي":
-        render_ai_agent()
-        
     elif nav == "💾 النسخ الاحتياطي":
         st.header("💾 النسخ الاحتياطي الشامل (Database Backup)")
         st.info("يمكنك تحميل نسخة احتياطية كاملة من قاعدة البيانات في ملف Excel واحد يحتوي على كافة الجداول.")
@@ -773,75 +726,8 @@ def admin_portal():
                     except: pass
                     try: pd.read_sql_query("SELECT * FROM Extracts", conn).to_excel(writer, sheet_name='Extracts', index=False)
                     except: pass
-                    try: pd.read_sql_query("SELECT * FROM Clients", conn).to_excel(writer, sheet_name='Clients', index=False)
-                    except: pass
                 conn.close()
                 st.download_button(label="💾 اضغط هنا لتحميل ملف الـ Excel الآن", data=output.getvalue(), file_name=f"Keyan_Backup_{get_egypt_time().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# ==========================================
-# بوابة المبيعات وخدمة العملاء (Sales & CRM Portal)
-# ==========================================
-def sales_portal():
-    emp_id = st.session_state['emp_id']
-    emp_name, emp_dept, balance = get_employee_info(emp_id)
-    render_sidebar("المبيعات وخدمة العملاء")
-    
-    nav = st.radio("القائمة:", ["👥 إدارة العملاء (CRM)", "👤 لوحتي الشخصية"], horizontal=True)
-    st.divider()
-    
-    if nav == "👥 إدارة العملاء (CRM)":
-        st.header("إضافة ومتابعة بيانات العملاء")
-        with st.form("add_client"):
-            c1, c2 = st.columns(2)
-            c_name = c2.text_input("اسم العميل")
-            c_phone = c1.text_input("رقم الهاتف")
-            c_proj = c2.selectbox("المشروع المهتم به", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى"])
-            c_status = c1.selectbox("حالة العميل", ["مهتم", "مؤجل", "تم التعاقد", "غير مهتم"])
-            c_notes = st.text_area("ملاحظات المتابعة")
-            
-            if st.form_submit_button("تسجيل بيانات العميل", type="primary"):
-                if c_name and c_phone:
-                    today_str = get_egypt_time().strftime("%Y/%m/%d")
-                    db_execute("INSERT INTO Clients (client_name, client_phone, project_interest, status, follow_up_notes, created_by, date) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
-                               (c_name, c_phone, c_proj, c_status, c_notes, emp_name, today_str))
-                    st.success("تم تسجيل بيانات العميل بنجاح!")
-                else:
-                    st.error("يرجى إدخال اسم العميل ورقم الهاتف على الأقل.")
-                    
-        st.divider()
-        st.subheader("قاعدة بيانات العملاء الخاصة بي")
-        conn = get_db_connection()
-        try:
-            # مدير المبيعات يشوف كل العملاء، والموظف يشوف عملائه فقط
-            if st.session_state['role'] in ['manager', 'admin_manager', 'owner']:
-                clients_df = pd.read_sql_query("SELECT id, client_name, client_phone, project_interest, status, follow_up_notes, created_by, date FROM Clients ORDER BY id DESC", conn)
-            else:
-                clients_df = pd.read_sql_query("SELECT id, client_name, client_phone, project_interest, status, follow_up_notes, date FROM Clients WHERE created_by=%s ORDER BY id DESC", conn, params=(emp_name,))
-                
-            if not clients_df.empty:
-                display_cols = ['الاسم', 'الموبايل', 'المشروع', 'الحالة', 'الملاحظات', 'بواسطة', 'التاريخ'] if 'created_by' in clients_df.columns else ['الاسم', 'الموبايل', 'المشروع', 'الحالة', 'الملاحظات', 'التاريخ']
-                clients_disp = clients_df.drop(columns=['id'])
-                clients_disp.columns = display_cols
-                st.dataframe(clients_disp, use_container_width=True, hide_index=True)
-                
-                # تحديث حالة عميل
-                st.markdown("### 🔄 تحديث حالة عميل")
-                with st.form("update_client"):
-                    c1, c2 = st.columns(2)
-                    selected_client_id = c2.selectbox("اختر العميل", clients_df['id'].astype(str) + " - " + clients_df['client_name'])
-                    new_status = c1.selectbox("الحالة الجديدة", ["مهتم", "مؤجل", "تم التعاقد", "غير مهتم"])
-                    new_notes = st.text_input("إضافة ملاحظات جديدة")
-                    if st.form_submit_button("تحديث"):
-                        cid = selected_client_id.split(" - ")[0]
-                        db_execute("UPDATE Clients SET status=%s, follow_up_notes = follow_up_notes || ' | ' || %s WHERE id=%s", (new_status, new_notes, cid))
-                        st.success("تم تحديث بيانات العميل بنجاح!"); st.rerun()
-            else:
-                st.info("لا يوجد عملاء مسجلين حتى الآن.")
-        except Exception as e:
-            pass
-        conn.close()
-    elif nav == "👤 لوحتي الشخصية":
-        render_employee_dashboard(emp_id, balance)
 
 # ==========================================
 # بوابة الموارد البشرية (HR Portal)
@@ -870,7 +756,7 @@ def admin_manager_portal():
     render_sidebar("المدير الإداري")
     render_smart_alerts()
 
-    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "✅ طلبات الموظفين", "📋 إسناد مهام", "📄 إدارة المستخلصات", "📝 تقارير الحضور", "🤖 الوكيل الآلي", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "✅ طلبات الموظفين", "📋 إسناد مهام", "📄 إدارة المستخلصات", "📝 تقارير الحضور", "👤 لوحتي الشخصية"], horizontal=True)
     st.divider()
     
     if nav == "📊 لوحة القيادة": render_company_dashboard()
@@ -892,7 +778,6 @@ def admin_manager_portal():
     elif nav == "📋 إسناد مهام": render_task_delegation("الكل")
     elif nav == "📄 إدارة المستخلصات": render_manage_extracts()
     elif nav == "📝 تقارير الحضور": render_attendance_report()
-    elif nav == "🤖 الوكيل الآلي": render_ai_agent()
     elif nav == "👤 لوحتي الشخصية": render_employee_dashboard(emp_id, balance)
 
 # ==========================================
@@ -903,12 +788,11 @@ def manager_portal():
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar(f"رئيس قسم: {emp_dept}")
 
-    nav_options = ["✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم", "🤖 الوكيل الآلي", "👤 لوحتي الشخصية"]
+    nav_options = ["✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم", "👤 لوحتي الشخصية"]
     
+    # التوجيه الذكي: إضافة مراجعة المستخلصات أوتوماتيكياً لو كان رئيس القسم من إدارة التخطيط
     if emp_dept == "مهندسين إدارة وتخطيط":
         nav_options.insert(3, "📄 مراجعة المستخلصات")
-    elif emp_dept == "مبيعات وخدمة عملاء":
-        nav_options.insert(3, "👥 إدارة العملاء (CRM)")
 
     nav = st.radio("القائمة:", nav_options, horizontal=True)
     st.divider()
@@ -930,10 +814,6 @@ def manager_portal():
     elif nav == "📋 إسناد مهام للقسم": render_task_delegation(emp_dept)
     elif nav == "📝 تقارير دوام القسم": render_attendance_report(department_filter=emp_dept)
     elif nav == "📄 مراجعة المستخلصات": render_manage_extracts()
-    elif nav == "👥 إدارة العملاء (CRM)": 
-        # إعادة توجيه لشاشة الـ CRM
-        sales_portal()
-    elif nav == "🤖 الوكيل الآلي": render_ai_agent()
     elif nav == "👤 لوحتي الشخصية": render_employee_dashboard(emp_id, balance)
 
 # ==========================================
@@ -944,7 +824,7 @@ def owner_portal():
     render_smart_alerts()
     
     st.title("👑 لوحة تحكم المالك")
-    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "📈 الموقف المالي والهندسي", "👥 تقارير المبيعات", "🤖 الوكيل الآلي"], horizontal=True)
+    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "📈 الموقف المالي والهندسي"], horizontal=True)
     st.divider()
 
     if nav == "📊 لوحة القيادة": render_company_dashboard()
@@ -1015,28 +895,6 @@ def owner_portal():
                     else: st.warning("لم يتم إرفاق ملف للوحة.")
         else: st.info("لا يوجد رسومات")
         conn.close()
-    
-    elif nav == "👥 تقارير المبيعات":
-        st.header("إحصائيات المبيعات وخدمة العملاء")
-        conn = get_db_connection()
-        try:
-            clients_df = pd.read_sql_query("SELECT client_name, client_phone, project_interest, status, created_by, date FROM Clients ORDER BY id DESC", conn)
-            if not clients_df.empty:
-                clients_df.columns = ['الاسم', 'الموبايل', 'المشروع المهتم به', 'الحالة', 'المسؤول', 'تاريخ الإضافة']
-                st.dataframe(clients_df, use_container_width=True, hide_index=True)
-                
-                # رسم بياني للمبيعات
-                st.markdown("### توزيع حالات العملاء")
-                fig = px.pie(clients_df, names="الحالة", hole=0.4, color_discrete_sequence=px.colors.sequential.YlOrBr)
-                fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_family="Tajawal", font_color="#fff")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("لا توجد بيانات مسجلة في قسم المبيعات.")
-        except:
-            st.warning("جاري تهيئة قاعدة بيانات المبيعات.")
-        conn.close()
-        
-    elif nav == "🤖 الوكيل الآلي": render_ai_agent()
 
 def accountant_portal():
     emp_id = st.session_state['emp_id']
@@ -1060,7 +918,8 @@ def accountant_portal():
         if not df.empty:
             df.columns = ['المشروع', 'النوع', 'المبلغ', 'تاريخ', 'الحالة']
             st.dataframe(df, hide_index=True)
-    elif nav == "📄 إدارة المستخلصات": render_manage_extracts()
+    elif nav == "📄 إدارة المستخلصات":
+        render_manage_extracts()
     else: render_employee_dashboard(emp_id, balance)
 
 def licensing_portal():
@@ -1095,10 +954,13 @@ def engineer_portal():
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("المهندس")
     
+    # التوجيه الذكي للمهندس بناءً على القسم (بدون الاحتياج لتغيير الصلاحية)
     if emp_dept == "مهندسين إدارة وتخطيط":
         nav = st.radio("القائمة:", ["📄 مراجعة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
-        if nav == "📄 مراجعة المستخلصات": render_manage_extracts()
-        else: render_employee_dashboard(emp_id, balance)
+        if nav == "📄 مراجعة المستخلصات":
+            render_manage_extracts()
+        else:
+            render_employee_dashboard(emp_id, balance)
     else:
         nav = st.radio("القائمة:", ["📐 الرسومات (خزنة الملفات)", "👤 لوحتي الشخصية"], horizontal=True)
         if nav == "📐 الرسومات (خزنة الملفات)":
@@ -1123,6 +985,9 @@ def engineer_portal():
                 st.dataframe(df, hide_index=True)
         else: render_employee_dashboard(emp_id, balance)
 
+# ==========================================
+# بوابة مهندس المستخلصات (Extracts Engineer)
+# ==========================================
 def extracts_engineer_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
@@ -1158,21 +1023,6 @@ def extracts_engineer_portal():
         except: pass
         conn.close()
     else: render_employee_dashboard(emp_id, balance)
-
-def planning_engineer_portal():
-    emp_id = st.session_state['emp_id']
-    emp_name, emp_dept, balance = get_employee_info(emp_id)
-    render_sidebar("مهندس إدارة وتخطيط")
-    
-    nav = st.radio("القائمة:", ["📄 مراجعة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
-    if nav == "📄 مراجعة المستخلصات": render_manage_extracts()
-    else: render_employee_dashboard(emp_id, balance)
-
-def employee_portal():
-    emp_id = st.session_state['emp_id']
-    _, _, balance = get_employee_info(emp_id)
-    render_sidebar("موظف")
-    render_employee_dashboard(emp_id, balance)
 
 # ==========================================
 # 10. الشاشة المشتركة للجميع (البصمة، التقرير الحر، والمهام المسندة)
@@ -1305,7 +1155,6 @@ else:
     elif role == 'licensing': licensing_portal()
     elif role == 'engineer': engineer_portal()
     elif role == 'extracts_engineer': extracts_engineer_portal() 
-    elif role == 'planning_engineer': planning_engineer_portal()
-    elif role == 'sales': sales_portal()
+    elif role == 'planning_engineer': planning_engineer_portal() # (للأمان فقط إذا تم تعيينه يدوياً)
     elif role == 'hr': hr_portal()
     else: employee_portal()
