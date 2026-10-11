@@ -112,16 +112,17 @@ DEFAULT_ANNUAL_BALANCE = 21
 LOGO_FILE = "image_c5a585.png"
 
 COMPANY_DEPARTMENTS = [
-    "اتش ار (HR)", "خدمة عملاء", "تراخيص", "حسابات", "عقود قانونية", 
+    "اتش ار (HR)", "مبيعات وخدمة عملاء", "تراخيص", "حسابات", "عقود قانونية", 
     "مهندسين مكتب فني", "مهندسين إدارة وتخطيط", "مهندسين تنفيذ", 
     "إدارة المستخلصات", "إدارة الـ IT", "إدارة عليا", "أخرى"
 ]
 
 ROLE_OPTIONS = [
     "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
-    "موارد بشرية (HR)", "مهندس (Engineer)", "مهندس إدارة وتخطيط (Planning Engineer)",
-    "مهندس مستخلصات (Extracts Engineer)", "محاسب (Accountant)", 
-    "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", "مسؤول نظام (Admin)", "مالك (Owner)"
+    "موارد بشرية (HR)", "مبيعات وخدمة عملاء (Sales/CS)", "مهندس (Engineer)", 
+    "مهندس إدارة وتخطيط (Planning Engineer)", "مهندس مستخلصات (Extracts Engineer)", 
+    "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", 
+    "مسؤول نظام (Admin)", "مالك (Owner)"
 ]
 
 ROLE_MAP = {
@@ -129,6 +130,7 @@ ROLE_MAP = {
     "رئيس قسم / مدير (Manager)": "manager", 
     "مدير إداري (Admin Manager)": "admin_manager", 
     "موارد بشرية (HR)": "hr", 
+    "مبيعات وخدمة عملاء (Sales/CS)": "sales",
     "مهندس (Engineer)": "engineer", 
     "مهندس إدارة وتخطيط (Planning Engineer)": "planning_engineer",
     "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer",
@@ -142,9 +144,10 @@ ROLE_MAP = {
 ROLE_REVERSE_MAP = {v: k for k, v in ROLE_MAP.items()}
 DISPLAY_MAP = {
     "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
-    "hr": "موارد بشرية", "engineer": "مهندس", "planning_engineer": "مهندس إدارة وتخطيط",
-    "extracts_engineer": "مهندس مستخلصات", "accountant": "محاسب", 
-    "licensing": "مسؤول تراخيص", "it": "مهندس IT", "admin": "مسؤول نظام", "owner": "المالك"
+    "hr": "موارد بشرية", "sales": "مبيعات وخدمة عملاء", "engineer": "مهندس", 
+    "planning_engineer": "مهندس إدارة وتخطيط", "extracts_engineer": "مهندس مستخلصات", 
+    "accountant": "محاسب", "licensing": "مسؤول تراخيص", "it": "مهندس IT", 
+    "admin": "مسؤول نظام", "owner": "المالك"
 }
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -170,6 +173,7 @@ def render_smart_alerts():
     today = get_egypt_time()
     alerts = []
 
+    # 1. التراخيص
     try:
         lic_df = pd.read_sql_query("SELECT license_name, project_name, due_date FROM ProjectLicenses WHERE status != 'منتهية'", conn)
         for _, row in lic_df.iterrows():
@@ -183,6 +187,7 @@ def render_smart_alerts():
             except: pass
     except: pass
 
+    # 2. الأقساط المالية للشركة (مدفوعات)
     try:
         fin_df = pd.read_sql_query("SELECT installment_type, project_name, due_date FROM ProjectFinancials WHERE status IN ('مستحق (لم يُدفع)', 'متأخر')", conn)
         for _, row in fin_df.iterrows():
@@ -190,9 +195,30 @@ def render_smart_alerts():
                 d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
                 days_left = (d_date - today).days
                 if 0 <= days_left <= 10:
-                    alerts.append(f"💸 **تنبيه مالي:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) يستحق الدفع خلال {days_left} أيام!")
+                    alerts.append(f"💸 **تنبيه مدفوعات:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) يستحق الدفع خلال {days_left} أيام!")
                 elif days_left < 0:
-                    alerts.append(f"🚨 **قسط متأخر:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) متأخر الدفع منذ {-days_left} أيام!")
+                    alerts.append(f"🚨 **مدفوعات متأخرة:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) متأخر الدفع منذ {-days_left} أيام!")
+            except: pass
+    except: pass
+
+    # 3. أقساط العملاء (مقبوضات - CRM)
+    try:
+        c_fin_df = pd.read_sql_query("""
+            SELECT c.name, u.project_name, u.unit_number, i.amount, i.due_date 
+            FROM ClientInstallments i 
+            JOIN Sales s ON i.sale_id = s.id 
+            JOIN Clients c ON s.client_id = c.id 
+            JOIN Units u ON s.unit_id = u.id 
+            WHERE i.status IN ('مستحق (لم يُدفع)', 'متأخر')
+        """, conn)
+        for _, row in c_fin_df.iterrows():
+            try:
+                d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
+                days_left = (d_date - today).days
+                if 0 <= days_left <= 7:
+                    alerts.append(f"🤝 **تنبيه تحصيل:** قسط العميل '{row['name']}' (وحدة {row['unit_number']}) بقيمة {row['amount']} مستحق للتحصيل خلال {days_left} أيام!")
+                elif days_left < 0:
+                    alerts.append(f"🔴 **تأخير تحصيل:** قسط العميل '{row['name']}' (وحدة {row['unit_number']}) متأخر في السداد منذ {-days_left} أيام!")
             except: pass
     except: pass
 
@@ -201,7 +227,7 @@ def render_smart_alerts():
     if alerts:
         with st.expander("🔔 اضغط هنا لرؤية التنبيهات الذكية الهامة!", expanded=True):
             for alert in alerts:
-                if '❌' in alert or '🚨' in alert: st.error(alert)
+                if '❌' in alert or '🚨' in alert or '🔴' in alert: st.error(alert)
                 else: st.warning(alert)
 
 # ==========================================
@@ -251,6 +277,12 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT)''')
         
+        # جداول الـ CRM الجديدة (العملاء، الوحدات، المبيعات، أقساط العملاء)
+        cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, name TEXT, phone TEXT, nid TEXT, notes TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Units (id SERIAL PRIMARY KEY, project_name TEXT, unit_type TEXT, unit_number TEXT, price REAL, status TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Sales (id SERIAL PRIMARY KEY, client_id INTEGER, unit_id INTEGER, sale_date TEXT, total_price REAL, notes TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS ClientInstallments (id SERIAL PRIMARY KEY, sale_id INTEGER, amount REAL, due_date TEXT, status TEXT)''')
+
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
         except: pass
         try: cur.execute("ALTER TABLE ProjectDrawings ADD COLUMN file_data TEXT")
@@ -518,7 +550,7 @@ def render_task_delegation(department):
             else: st.error("يرجى كتابة تفاصيل المهمة وتحديد الموظف.")
 
 # ==========================================
-# دالة موحدة لإدارة المستخلصات للمديرين والحسابات (وتخطيط)
+# دالة إدارة المستخلصات (للحسابات والمدير ومهندس التخطيط)
 # ==========================================
 def render_manage_extracts():
     st.header("📄 إدارة ومراجعة المستخلصات الهندسية")
@@ -527,8 +559,6 @@ def render_manage_extracts():
     emp_id = st.session_state.get('emp_id')
     _, emp_dept, _ = get_employee_info(emp_id)
     role = st.session_state.get('role', '')
-    
-    # تحديد إذا كان المستخدم مهندس إدارة وتخطيط (عن طريق الدور أو القسم)
     is_planning_auth = (role == 'planning_engineer') or (emp_dept == "مهندسين إدارة وتخطيط")
 
     try:
@@ -546,8 +576,6 @@ def render_manage_extracts():
                     else: st.warning("لا يوجد ملف مرفق.")
                     
                     c1, c2, c3 = st.columns(3)
-                    
-                    # عرض أزرار المراجعة الفنية فقط لمهندس التخطيط، والمراجعة المالية للحسابات والإدارة
                     if is_planning_auth:
                         if c1.button("✅ اعتماد فني وهندسي", key=f"eng_app_{row['id']}", type="primary"):
                             db_execute("UPDATE Extracts SET status='معتمد هندسياً (للحسابات)' WHERE id=%s", (row['id'],)); st.rerun()
@@ -726,11 +754,19 @@ def admin_portal():
                     except: pass
                     try: pd.read_sql_query("SELECT * FROM Extracts", conn).to_excel(writer, sheet_name='Extracts', index=False)
                     except: pass
+                    try: pd.read_sql_query("SELECT * FROM Clients", conn).to_excel(writer, sheet_name='Clients', index=False)
+                    except: pass
+                    try: pd.read_sql_query("SELECT * FROM Units", conn).to_excel(writer, sheet_name='Units', index=False)
+                    except: pass
+                    try: pd.read_sql_query("SELECT * FROM Sales", conn).to_excel(writer, sheet_name='Sales', index=False)
+                    except: pass
+                    try: pd.read_sql_query("SELECT * FROM ClientInstallments", conn).to_excel(writer, sheet_name='Client_Installments', index=False)
+                    except: pass
                 conn.close()
                 st.download_button(label="💾 اضغط هنا لتحميل ملف الـ Excel الآن", data=output.getvalue(), file_name=f"Keyan_Backup_{get_egypt_time().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ==========================================
-# بوابة الموارد البشرية (HR Portal)
+# 7. بوابة الموارد البشرية (HR)
 # ==========================================
 def hr_portal():
     emp_id = st.session_state['emp_id']
@@ -742,13 +778,107 @@ def hr_portal():
     
     if nav == "📝 تقارير الحضور والانصراف للشركة":
         st.header("شيت الحضور والانصراف الشامل للشركة")
-        st.info("كمسؤول موارد بشرية، يمكنك استعراض وطباعة تقارير الدوام لجميع الموظفين في الشركة.")
         render_attendance_report()
     elif nav == "👤 لوحتي الشخصية":
         render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# 7. بوابة المدير الإداري (Admin Manager)
+# 8. بوابة المبيعات وخدمة العملاء (Sales / CRM) - جديدة
+# ==========================================
+def sales_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+    render_sidebar("مبيعات وخدمة عملاء")
+    
+    nav = st.radio("القائمة:", ["👥 إدارة العملاء", "🏢 إدارة الوحدات العقارية", "💰 المبيعات والأقساط", "👤 لوحتي الشخصية"], horizontal=True)
+    st.divider()
+    
+    conn = get_db_connection()
+    
+    if nav == "👥 إدارة العملاء":
+        st.header("قاعدة بيانات العملاء")
+        with st.form("add_client"):
+            c1, c2, c3 = st.columns(3)
+            client_name = c1.text_input("اسم العميل")
+            client_phone = c2.text_input("رقم الهاتف")
+            client_nid = c3.text_input("الرقم القومي (اختياري)")
+            client_notes = st.text_input("ملاحظات")
+            if st.form_submit_button("إضافة عميل جديد", type="primary") and client_name:
+                db_execute("INSERT INTO Clients (name, phone, nid, notes) VALUES (%s, %s, %s, %s)", (client_name, client_phone, client_nid, client_notes))
+                st.success("تم إضافة العميل بنجاح!")
+                
+        df_clients = pd.read_sql_query("SELECT id, name, phone, nid, notes FROM Clients ORDER BY id DESC", conn)
+        if not df_clients.empty:
+            df_clients.columns = ['رقم', 'اسم العميل', 'الهاتف', 'الرقم القومي', 'ملاحظات']
+            st.dataframe(df_clients, hide_index=True, use_container_width=True)
+            
+    elif nav == "🏢 إدارة الوحدات العقارية":
+        st.header("إدارة الشقق والمحلات")
+        with st.form("add_unit"):
+            c1, c2, c3 = st.columns(3)
+            u_proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
+            u_type = c2.selectbox("نوع الوحدة", ["شقة سكنية", "محل تجاري", "رووف", "جراج", "أخرى"])
+            u_number = c3.text_input("رقم الوحدة (مثال: شقة 12 الدور 3)")
+            u_price = st.number_input("السعر المقدر للوحدة", min_value=0.0)
+            if st.form_submit_button("إضافة وحدة للمخزون", type="primary") and u_number:
+                db_execute("INSERT INTO Units (project_name, unit_type, unit_number, price, status) VALUES (%s, %s, %s, %s, 'متاحة')", (u_proj, u_type, u_number, u_price))
+                st.success("تم تسجيل الوحدة بنجاح وهي الآن 'متاحة' للبيع.")
+                
+        df_units = pd.read_sql_query("SELECT id, project_name, unit_type, unit_number, price, status FROM Units ORDER BY id DESC", conn)
+        if not df_units.empty:
+            df_units.columns = ['رقم', 'المشروع', 'النوع', 'رقم الوحدة', 'السعر', 'الحالة']
+            st.dataframe(df_units, hide_index=True, use_container_width=True)
+
+    elif nav == "💰 المبيعات والأقساط":
+        st.header("تسجيل عمليات البيع وأقساط العملاء")
+        df_clients = pd.read_sql_query("SELECT id, name FROM Clients", conn)
+        df_units = pd.read_sql_query("SELECT id, project_name, unit_number FROM Units WHERE status='متاحة'", conn)
+        
+        if not df_clients.empty and not df_units.empty:
+            with st.expander("➕ تسجيل عملية بيع جديدة", expanded=False):
+                with st.form("new_sale"):
+                    client_options = {row['name']: row['id'] for _, row in df_clients.iterrows()}
+                    unit_options = {f"{row['project_name']} - {row['unit_number']}": row['id'] for _, row in df_units.iterrows()}
+                    
+                    c1, c2 = st.columns(2)
+                    sel_client = c1.selectbox("اختر العميل", list(client_options.keys()))
+                    sel_unit = c2.selectbox("اختر الوحدة (المتاحة فقط)", list(unit_options.keys()))
+                    sale_price = c1.number_input("إجمالي سعر البيع الفعلي", min_value=0.0)
+                    sale_date = c2.date_input("تاريخ التعاقد")
+                    
+                    if st.form_submit_button("تأكيد البيع 🤝", type="primary"):
+                        c_id, u_id = client_options[sel_client], unit_options[sel_unit]
+                        db_execute("INSERT INTO Sales (client_id, unit_id, sale_date, total_price, notes) VALUES (%s, %s, %s, %s, '')", (c_id, u_id, sale_date.strftime("%Y/%m/%d"), sale_price))
+                        db_execute("UPDATE Units SET status='مباعة' WHERE id=%s", (u_id,))
+                        st.success("تم إتمام البيع بنجاح!")
+                        st.rerun()
+                        
+        st.divider()
+        st.subheader("جدولة وإضافة أقساط للعملاء")
+        df_sales = pd.read_sql_query("SELECT s.id, c.name, u.unit_number FROM Sales s JOIN Clients c ON s.client_id = c.id JOIN Units u ON s.unit_id = u.id", conn)
+        if not df_sales.empty:
+            sale_options = {f"العميل: {row['name']} | وحدة: {row['unit_number']}": row['id'] for _, row in df_sales.iterrows()}
+            with st.form("add_inst"):
+                c1, c2, c3 = st.columns(3)
+                sel_sale = c1.selectbox("اختر التعاقد", list(sale_options.keys()))
+                inst_amount = c2.number_input("قيمة القسط المستحق", min_value=0.0)
+                inst_date = c3.date_input("تاريخ الاستحقاق")
+                if st.form_submit_button("إضافة قسط للعميل", type="primary"):
+                    db_execute("INSERT INTO ClientInstallments (sale_id, amount, due_date, status) VALUES (%s, %s, %s, 'مستحق (لم يُدفع)')", (sale_options[sel_sale], inst_amount, inst_date.strftime("%Y/%m/%d")))
+                    st.success("تم تسجيل القسط بنجاح! سيتم تنبيهكم عند اقتراب موعده.")
+                    
+            df_inst = pd.read_sql_query("SELECT c.name, u.project_name, i.amount, i.due_date, i.status FROM ClientInstallments i JOIN Sales s ON i.sale_id = s.id JOIN Clients c ON s.client_id = c.id JOIN Units u ON s.unit_id = u.id ORDER BY i.due_date DESC", conn)
+            if not df_inst.empty:
+                df_inst.columns = ['اسم العميل', 'المشروع', 'قيمة القسط', 'الاستحقاق', 'الحالة']
+                st.dataframe(df_inst, hide_index=True, use_container_width=True)
+        else: st.info("يجب تسجيل عمليات بيع أولاً لإضافة أقساط.")
+        
+    elif nav == "👤 لوحتي الشخصية":
+        render_employee_dashboard(emp_id, balance)
+    conn.close()
+
+# ==========================================
+# 9. بوابة المدير الإداري (Admin Manager)
 # ==========================================
 def admin_manager_portal():
     emp_id = st.session_state['emp_id']
@@ -781,7 +911,7 @@ def admin_manager_portal():
     elif nav == "👤 لوحتي الشخصية": render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# 8. بوابة رئيس القسم (Manager)
+# 10. بوابة رئيس القسم (Manager)
 # ==========================================
 def manager_portal():
     emp_id = st.session_state['emp_id']
@@ -789,10 +919,7 @@ def manager_portal():
     render_sidebar(f"رئيس قسم: {emp_dept}")
 
     nav_options = ["✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم", "👤 لوحتي الشخصية"]
-    
-    # التوجيه الذكي: إضافة مراجعة المستخلصات أوتوماتيكياً لو كان رئيس القسم من إدارة التخطيط
-    if emp_dept == "مهندسين إدارة وتخطيط":
-        nav_options.insert(3, "📄 مراجعة المستخلصات")
+    if emp_dept == "مهندسين إدارة وتخطيط": nav_options.insert(3, "📄 مراجعة المستخلصات")
 
     nav = st.radio("القائمة:", nav_options, horizontal=True)
     st.divider()
@@ -817,14 +944,14 @@ def manager_portal():
     elif nav == "👤 لوحتي الشخصية": render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# 9. بوابات المالك، الحسابات، التراخيص، والمهندس
+# 11. بوابات المالك، الحسابات، التراخيص، والمهندسين
 # ==========================================
 def owner_portal():
     render_sidebar("المالك")
     render_smart_alerts()
     
     st.title("👑 لوحة تحكم المالك")
-    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "📈 الموقف المالي والهندسي"], horizontal=True)
+    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "🤝 المبيعات وتحصيل العملاء", "📈 الموقف المالي والهندسي"], horizontal=True)
     st.divider()
 
     if nav == "📊 لوحة القيادة": render_company_dashboard()
@@ -838,12 +965,32 @@ def owner_portal():
             st.dataframe(reports, use_container_width=True, hide_index=True)
         else: st.info("لا يوجد تقارير مسجلة لهذا المشروع.")
         conn.close()
+        
+    elif nav == "🤝 المبيعات وتحصيل العملاء":
+        st.header("إحصائيات المبيعات وأقساط العملاء (CRM)")
+        conn = get_db_connection()
+        try:
+            total_sales = pd.read_sql_query("SELECT SUM(total_price) as total FROM Sales", conn).iloc[0]['total']
+            units_sold = pd.read_sql_query("SELECT COUNT(*) as count FROM Units WHERE status='مباعة'", conn).iloc[0]['count']
+            c1, c2 = st.columns(2)
+            c1.metric("إجمالي المبيعات", f"{total_sales or 0:,.2f} ج.م")
+            c2.metric("الوحدات المباعة", f"{units_sold or 0} وحدة")
+            
+            st.subheader("أقساط العملاء القادمة")
+            df_inst = pd.read_sql_query("SELECT c.name, u.project_name, u.unit_number, i.amount, i.due_date, i.status FROM ClientInstallments i JOIN Sales s ON i.sale_id = s.id JOIN Clients c ON s.client_id = c.id JOIN Units u ON s.unit_id = u.id ORDER BY i.due_date ASC", conn)
+            if not df_inst.empty:
+                df_inst.columns = ['العميل', 'المشروع', 'رقم الوحدة', 'المبلغ', 'الاستحقاق', 'الحالة']
+                st.dataframe(df_inst, hide_index=True, use_container_width=True)
+            else: st.info("لا يوجد أقساط مسجلة للعملاء.")
+        except: pass
+        conn.close()
+
     elif nav == "📈 الموقف المالي والهندسي":
         conn = get_db_connection()
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع:", project_list)
         
-        st.markdown("### 💰 الأقساط المالية")
+        st.markdown("### 💰 أقساط ومصروفات الشركة")
         fin_df = pd.read_sql_query("SELECT installment_type, amount, due_date, status FROM ProjectFinancials WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
         if not fin_df.empty: st.dataframe(fin_df, use_container_width=True, hide_index=True)
         else: st.info("لا يوجد أقساط")
@@ -900,8 +1047,11 @@ def accountant_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("المحاسب")
-    nav = st.radio("القائمة:", ["💰 إدارة الأقساط", "📄 إدارة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
-    if nav == "💰 إدارة الأقساط":
+    
+    nav = st.radio("القائمة:", ["💰 أقساط الشركة (مدفوعات)", "🤝 أقساط العملاء (مقبوضات)", "📄 إدارة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
+    conn = get_db_connection()
+    
+    if nav == "💰 أقساط الشركة (مدفوعات)":
         with st.form("add_fin"):
             c1, c2 = st.columns(2)
             proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
@@ -912,15 +1062,30 @@ def accountant_portal():
             if st.form_submit_button("تسجيل القسط", type="primary"):
                 db_execute("INSERT INTO ProjectFinancials (project_name, installment_type, amount, due_date, status) VALUES (%s, %s, %s, %s, %s)", (proj, inst_type, amount, due_date.strftime("%Y/%m/%d"), status))
                 st.success("تم التسجيل بنجاح!")
-        conn = get_db_connection()
         df = pd.read_sql_query("SELECT project_name, installment_type, amount, due_date, status FROM ProjectFinancials", conn)
-        conn.close()
         if not df.empty:
             df.columns = ['المشروع', 'النوع', 'المبلغ', 'تاريخ', 'الحالة']
             st.dataframe(df, hide_index=True)
+            
+    elif nav == "🤝 أقساط العملاء (مقبوضات)":
+        st.header("إدارة تحصيل أقساط العملاء")
+        try:
+            df_inst = pd.read_sql_query("SELECT i.id, c.name, u.project_name, u.unit_number, i.amount, i.due_date, i.status FROM ClientInstallments i JOIN Sales s ON i.sale_id = s.id JOIN Clients c ON s.client_id = c.id JOIN Units u ON s.unit_id = u.id ORDER BY i.due_date ASC", conn)
+            if not df_inst.empty:
+                for _, row in df_inst.iterrows():
+                    with st.expander(f"العميل: {row['name']} | وحدة: {row['unit_number']} | القسط: {row['amount']} | الحالة: {row['status']}"):
+                        st.write(f"المشروع: {row['project_name']} | تاريخ الاستحقاق: {row['due_date']}")
+                        if row['status'] != 'تم التحصيل':
+                            if st.button("✅ تأكيد استلام المبلغ (تم التحصيل)", key=f"col_{row['id']}", type="primary"):
+                                db_execute("UPDATE ClientInstallments SET status='تم التحصيل' WHERE id=%s", (row['id'],))
+                                st.success("تم تأكيد التحصيل بنجاح!"); st.rerun()
+            else: st.info("لا يوجد أقساط مسجلة للعملاء.")
+        except: st.info("جاري تهيئة جداول العملاء.")
+        
     elif nav == "📄 إدارة المستخلصات":
         render_manage_extracts()
     else: render_employee_dashboard(emp_id, balance)
+    conn.close()
 
 def licensing_portal():
     emp_id = st.session_state['emp_id']
@@ -935,12 +1100,10 @@ def licensing_portal():
             due_date = c1.date_input("الانتهاء")
             status = c2.selectbox("الحالة", ["سارية", "تحت الإجراء", "منتهية"])
             uploaded_file = st.file_uploader("إرفاق ملف الترخيص (PDF/صورة) - أقل من 5 ميجا", type=['pdf', 'jpg', 'png'])
-            
             if st.form_submit_button("تسجيل الترخيص", type="primary") and lic_name:
                 file_b64 = base64.b64encode(uploaded_file.read()).decode('utf-8') if uploaded_file else ""
                 db_execute("INSERT INTO ProjectLicenses (project_name, license_name, due_date, status, file_data) VALUES (%s, %s, %s, %s, %s)", (proj, lic_name, due_date.strftime("%Y/%m/%d"), status, file_b64))
                 st.success("تم التسجيل ورفع المستند بنجاح!")
-                
         conn = get_db_connection()
         df = pd.read_sql_query("SELECT project_name, license_name, due_date, status FROM ProjectLicenses", conn)
         conn.close()
@@ -953,14 +1116,10 @@ def engineer_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("المهندس")
-    
-    # التوجيه الذكي للمهندس بناءً على القسم (بدون الاحتياج لتغيير الصلاحية)
     if emp_dept == "مهندسين إدارة وتخطيط":
         nav = st.radio("القائمة:", ["📄 مراجعة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
-        if nav == "📄 مراجعة المستخلصات":
-            render_manage_extracts()
-        else:
-            render_employee_dashboard(emp_id, balance)
+        if nav == "📄 مراجعة المستخلصات": render_manage_extracts()
+        else: render_employee_dashboard(emp_id, balance)
     else:
         nav = st.radio("القائمة:", ["📐 الرسومات (خزنة الملفات)", "👤 لوحتي الشخصية"], horizontal=True)
         if nav == "📐 الرسومات (خزنة الملفات)":
@@ -971,12 +1130,10 @@ def engineer_portal():
                 due_date = c1.date_input("التسليم")
                 status = c2.selectbox("الحالة", ["قيد التنفيذ", "تحت المراجعة", "مكتملة"])
                 uploaded_file = st.file_uploader("إرفاق لوحة الرسم (PDF/صورة) - أقل من 5 ميجا", type=['pdf', 'jpg', 'png', 'dwg'])
-                
                 if st.form_submit_button("تسجيل الرسم", type="primary") and draw_name:
                     file_b64 = base64.b64encode(uploaded_file.read()).decode('utf-8') if uploaded_file else ""
                     db_execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status, file_data) VALUES (%s, %s, %s, %s, %s)", (proj, draw_name, due_date.strftime("%Y/%m/%d"), status, file_b64))
                     st.success("تم التسجيل ورفع اللوحة بنجاح!")
-                    
             conn = get_db_connection()
             df = pd.read_sql_query("SELECT project_name, drawing_name, due_date, status FROM ProjectDrawings", conn)
             conn.close()
@@ -985,15 +1142,11 @@ def engineer_portal():
                 st.dataframe(df, hide_index=True)
         else: render_employee_dashboard(emp_id, balance)
 
-# ==========================================
-# بوابة مهندس المستخلصات (Extracts Engineer)
-# ==========================================
 def extracts_engineer_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("مهندس المستخلصات")
     nav = st.radio("القائمة:", ["📄 إنشاء وإدارة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
-    
     if nav == "📄 إنشاء وإدارة المستخلصات":
         st.header("إضافة ورفع مستخلص هندسي")
         with st.form("add_extract"):
@@ -1003,14 +1156,12 @@ def extracts_engineer_portal():
             ext_amount = c1.number_input("القيمة المالية للمستخلص", min_value=0.0)
             ext_date = c2.date_input("تاريخ المستخلص")
             uploaded_ext = st.file_uploader("إرفاق ملف المستخلص (PDF/صورة) للحسابات", type=['pdf', 'jpg', 'png'])
-            
             if st.form_submit_button("رفع المستخلص 🚀", type="primary"):
                 if ext_name and ext_amount > 0:
                     file_b64 = base64.b64encode(uploaded_ext.read()).decode('utf-8') if uploaded_ext else ""
                     db_execute("INSERT INTO Extracts (project_name, extract_name, amount, date, created_by, status, file_data) VALUES (%s, %s, %s, %s, %s, 'قيد المراجعة', %s)", (proj, ext_name, ext_amount, ext_date.strftime("%Y/%m/%d"), emp_name, file_b64))
                     st.success("تم رفع المستخلص بنجاح وهو الآن بانتظار الاعتماد!")
                 else: st.error("يرجى كتابة اسم المستخلص وتحديد قيمته!")
-                
         st.divider()
         st.subheader("مستخلصاتي السابقة المرفوعة")
         conn = get_db_connection()
@@ -1024,8 +1175,22 @@ def extracts_engineer_portal():
         conn.close()
     else: render_employee_dashboard(emp_id, balance)
 
+def planning_engineer_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+    render_sidebar("مهندس إدارة وتخطيط")
+    nav = st.radio("القائمة:", ["📄 مراجعة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
+    if nav == "📄 مراجعة المستخلصات": render_manage_extracts()
+    else: render_employee_dashboard(emp_id, balance)
+
+def employee_portal():
+    emp_id = st.session_state['emp_id']
+    _, _, balance = get_employee_info(emp_id)
+    render_sidebar("موظف")
+    render_employee_dashboard(emp_id, balance)
+
 # ==========================================
-# 10. الشاشة المشتركة للجميع (البصمة، التقرير الحر، والمهام المسندة)
+# 12. الشاشة المشتركة للجميع (البصمة، التقرير الحر، والمهام المسندة)
 # ==========================================
 def render_employee_dashboard(emp_id, balance):
     month, delay_mins, absent_str, overtime_mins = get_employee_stats(emp_id)
@@ -1048,7 +1213,6 @@ def render_employee_dashboard(emp_id, balance):
     c1.metric("الرصيد المتبقي", f"{balance} يوم")
     c2.metric("التأخيرات الكلية", f"{format_hhmm(delay_mins)} ساعة")
     c3.metric("الوقت الإضافي", f"{format_hhmm(overtime_mins)} ساعة")
-    
     try: pending = db_fetchone("SELECT COUNT(*) FROM Requests WHERE emp_id=%s AND status='قيد الانتظار'", (emp_id,))[0]
     except: pending = 0
     c4.metric("طلبات معلقة", pending)
@@ -1085,7 +1249,6 @@ def render_employee_dashboard(emp_id, balance):
                                 st.success("تم تسجيل الحضور بنجاح!"); st.rerun() 
                         else:
                             st.info("✅ تم تسجيل حضورك اليوم بنجاح.")
-                            
                             conn = get_db_connection()
                             try: tasks = pd.read_sql_query("SELECT id, assigner, project_name, task_desc, due_date FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", conn, params=(emp_id,))
                             except: tasks = pd.DataFrame()
@@ -1155,6 +1318,7 @@ else:
     elif role == 'licensing': licensing_portal()
     elif role == 'engineer': engineer_portal()
     elif role == 'extracts_engineer': extracts_engineer_portal() 
-    elif role == 'planning_engineer': planning_engineer_portal() # (للأمان فقط إذا تم تعيينه يدوياً)
+    elif role == 'planning_engineer': planning_engineer_portal() 
     elif role == 'hr': hr_portal()
+    elif role == 'sales': sales_portal()
     else: employee_portal()
