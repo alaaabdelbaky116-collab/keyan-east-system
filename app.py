@@ -111,31 +111,41 @@ REQUIRED_HOURS = 7
 DEFAULT_ANNUAL_BALANCE = 21
 LOGO_FILE = "image_c5a585.png"
 
+# تحديث الأقسام لإضافة إدارة المستخلصات وإدارة الـ IT
 COMPANY_DEPARTMENTS = [
     "اتش ار (HR)", "خدمة عملاء", "تراخيص", "حسابات", "عقود قانونية", 
-    "مهندسين مكتب فني", "مهندسين إدارة وتخطيط", "مهندسين تنفيذ", "إدارة عليا", "أخرى"
+    "مهندسين مكتب فني", "مهندسين إدارة وتخطيط", "مهندسين تنفيذ", 
+    "إدارة المستخلصات", "إدارة الـ IT", "إدارة عليا", "أخرى"
 ]
 
-# تحديث قوائم الصلاحيات لدمج الـ IT والـ HR
+# تحديث قوائم الصلاحيات لدمج كل التخصصات
 ROLE_OPTIONS = [
     "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
-    "موارد بشرية (HR)", "مهندس (Engineer)", "محاسب (Accountant)", 
-    "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", "مسؤول نظام (Admin)", "مالك (Owner)"
+    "موارد بشرية (HR)", "مهندس (Engineer)", "مهندس مستخلصات (Extracts Engineer)", 
+    "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", 
+    "مسؤول نظام (Admin)", "مالك (Owner)"
 ]
 
 ROLE_MAP = {
-    "موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", 
-    "مدير إداري (Admin Manager)": "admin_manager", "موارد بشرية (HR)": "hr", 
-    "مهندس (Engineer)": "engineer", "محاسب (Accountant)": "accountant", 
-    "مسؤول تراخيص (Licensing)": "licensing", "مهندس IT (IT)": "it", 
-    "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"
+    "موظف عادي (Employee)": "employee", 
+    "رئيس قسم / مدير (Manager)": "manager", 
+    "مدير إداري (Admin Manager)": "admin_manager", 
+    "موارد بشرية (HR)": "hr", 
+    "مهندس (Engineer)": "engineer", 
+    "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer",
+    "محاسب (Accountant)": "accountant", 
+    "مسؤول تراخيص (Licensing)": "licensing", 
+    "مهندس IT (IT)": "it", 
+    "مسؤول نظام (Admin)": "admin", 
+    "مالك (Owner)": "owner"
 }
 
 ROLE_REVERSE_MAP = {v: k for k, v in ROLE_MAP.items()}
 DISPLAY_MAP = {
     "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
-    "hr": "موارد بشرية", "engineer": "مهندس", "accountant": "محاسب", 
-    "licensing": "مسؤول تراخيص", "it": "مهندس IT", "admin": "مسؤول نظام", "owner": "المالك"
+    "hr": "موارد بشرية", "engineer": "مهندس", "extracts_engineer": "مهندس مستخلصات", 
+    "accountant": "محاسب", "licensing": "مسؤول تراخيص", "it": "مهندس IT", 
+    "admin": "مسؤول نظام", "owner": "المالك"
 }
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -221,7 +231,7 @@ def render_sidebar(role_title):
             st.rerun()
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL (مع جدول المستخلصات)
+# 3. حماية وتجهيز جداول PostgreSQL
 # ==========================================
 def init_db():
     try:
@@ -240,8 +250,6 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id SERIAL PRIMARY KEY, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
-        
-        # جدول المستخلصات الجديد
         cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT)''')
         
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
@@ -254,8 +262,7 @@ def init_db():
             
         cur.close()
         conn.close()
-    except Exception as e:
-        pass 
+    except Exception as e: pass 
 
 init_db()
 
@@ -512,10 +519,40 @@ def render_task_delegation(department):
             else: st.error("يرجى كتابة تفاصيل المهمة وتحديد الموظف.")
 
 # ==========================================
+# دالة موحدة لإدارة المستخلصات للمديرين والحسابات
+# ==========================================
+def render_manage_extracts():
+    st.header("📄 إدارة المستخلصات الهندسية")
+    conn = get_db_connection()
+    try:
+        ext_df = pd.read_sql_query("SELECT id, project_name, extract_name, amount, date, created_by, status, file_data FROM Extracts ORDER BY id DESC", conn)
+        if not ext_df.empty:
+            for _, row in ext_df.iterrows():
+                with st.expander(f"مستخلص: {row['extract_name']} | المشروع: {row['project_name']} | الحالة: {row['status']}"):
+                    st.write(f"**القيمة:** {row['amount']} | **بواسطة:** {row['created_by']} | **التاريخ:** {row['date']}")
+                    file_content = row['file_data']
+                    if file_content and isinstance(file_content, str) and len(file_content) > 10:
+                        try:
+                            decoded_bytes = base64.b64decode(file_content)
+                            st.download_button("📥 تحميل المستخلص للمراجعة", data=decoded_bytes, file_name=f"{row['extract_name']}.pdf", mime="application/octet-stream", key=f"dl_mng_ext_{row['id']}")
+                        except: pass
+                    else: st.warning("لا يوجد ملف مرفق.")
+                    
+                    c1, c2, c3 = st.columns(3)
+                    if c1.button("✅ اعتماد وتم الصرف", key=f"pay_{row['id']}", type="primary"):
+                        db_execute("UPDATE Extracts SET status='تم الصرف' WHERE id=%s", (row['id'],)); st.rerun()
+                    if c2.button("🔄 إعادة للمراجعة", key=f"rev_{row['id']}"):
+                        db_execute("UPDATE Extracts SET status='مراجعة نهائية' WHERE id=%s", (row['id'],)); st.rerun()
+                    if c3.button("❌ رفض المستخلص", key=f"rej_{row['id']}"):
+                        db_execute("UPDATE Extracts SET status='مرفوض' WHERE id=%s", (row['id'],)); st.rerun()
+        else: st.info("لا يوجد مستخلصات مرفوعة حتى الآن.")
+    except: st.warning("جاري تهيئة جداول المستخلصات.")
+    conn.close()
+
+# ==========================================
 # 6. بوابة الإدارة (Admin / IT)
 # ==========================================
 def admin_portal():
-    # بوابة الإدارة الآن مخصصة لمدير النظام ومهندس الـ IT بناءً على طلبك
     render_sidebar("الإدارة التكنولوجية (IT/Admin)")
     nav = st.radio("القائمة الرئيسية:", ["📊 تحليل البصمة", "✅ الطلبات", "➕ إنشاء حساب", "⚙ إدارة الحسابات", "📍 المواقع", "📌 تقارير المناديب", "💾 النسخ الاحتياطي"], horizontal=True)
     st.divider()
@@ -660,7 +697,7 @@ def admin_portal():
                 st.download_button(label="💾 اضغط هنا لتحميل ملف الـ Excel الآن", data=output.getvalue(), file_name=f"Keyan_Backup_{get_egypt_time().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ==========================================
-# بوابة الموارد البشرية (HR Portal) - شاشة جديدة
+# بوابة الموارد البشرية (HR Portal)
 # ==========================================
 def hr_portal():
     emp_id = st.session_state['emp_id']
@@ -686,7 +723,7 @@ def admin_manager_portal():
     render_sidebar("المدير الإداري")
     render_smart_alerts()
 
-    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "✅ طلبات الموظفين", "📋 إسناد مهام", "📝 تقارير الحضور", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "✅ طلبات الموظفين", "📋 إسناد مهام", "📄 إدارة المستخلصات", "📝 تقارير الحضور", "👤 لوحتي الشخصية"], horizontal=True)
     st.divider()
     
     if nav == "📊 لوحة القيادة": render_company_dashboard()
@@ -706,6 +743,7 @@ def admin_manager_portal():
                     if c2.button("رفض الطلب", key=f"rej_{row['id']}"):
                         db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],)); st.rerun()
     elif nav == "📋 إسناد مهام": render_task_delegation("الكل")
+    elif nav == "📄 إدارة المستخلصات": render_manage_extracts()
     elif nav == "📝 تقارير الحضور": render_attendance_report()
     elif nav == "👤 لوحتي الشخصية": render_employee_dashboard(emp_id, balance)
 
@@ -765,15 +803,14 @@ def owner_portal():
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع:", project_list)
         
-        st.markdown("### 💰 الأقساط")
+        st.markdown("### 💰 الأقساط المالية")
         fin_df = pd.read_sql_query("SELECT installment_type, amount, due_date, status FROM ProjectFinancials WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
         if not fin_df.empty: st.dataframe(fin_df, use_container_width=True, hide_index=True)
         else: st.info("لا يوجد أقساط")
         
-        # إضافة عرض المستخلصات للمالك
         st.markdown("### 📄 المستخلصات الهندسية (المرفوعة)")
         try:
-            ext_df = pd.read_sql_query("SELECT extract_name, amount, date, created_by, status, file_data FROM Extracts WHERE project_name = %s ORDER BY id DESC", conn, params=(selected_project,))
+            ext_df = pd.read_sql_query("SELECT id, extract_name, amount, date, created_by, status, file_data FROM Extracts WHERE project_name = %s ORDER BY id DESC", conn, params=(selected_project,))
             if not ext_df.empty:
                 for _, row in ext_df.iterrows():
                     with st.expander(f"مستخلص: {row['extract_name']} | القيمة: {row['amount']} | الحالة: {row['status']}"):
@@ -782,11 +819,11 @@ def owner_portal():
                         if file_content and isinstance(file_content, str) and len(file_content) > 10:
                             try:
                                 decoded_bytes = base64.b64decode(file_content)
-                                st.download_button("📥 تحميل المستخلص المرفق", data=decoded_bytes, file_name=f"{row['extract_name']}_extract.pdf", mime="application/octet-stream", key=f"dl_ext_{row['extract_name']}")
-                            except: st.warning("⚠️ الملف المرفق تالف.")
+                                st.download_button("📥 تحميل المستخلص المرفق", data=decoded_bytes, file_name=f"{row['extract_name']}_extract.pdf", mime="application/octet-stream", key=f"dl_own_ext_{row['id']}")
+                            except: pass
                         else: st.warning("لم يتم إرفاق ملف لهذا المستخلص.")
             else: st.info("لا يوجد مستخلصات لهذا المشروع.")
-        except: st.info("جاري تحديث جدول المستخلصات.")
+        except: pass
         
         st.markdown("### 📜 التراخيص ومستنداتها")
         lic_df = pd.read_sql_query("SELECT license_name, due_date, status, file_data FROM ProjectLicenses WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
@@ -799,7 +836,7 @@ def owner_portal():
                         try:
                             decoded_bytes = base64.b64decode(file_content)
                             st.download_button("📥 تحميل المستند المرفق", data=decoded_bytes, file_name=f"{row['license_name']}_doc.pdf", mime="application/octet-stream", key=f"dl_lic_{row['license_name']}")
-                        except: st.warning("⚠️ الملف المرفق تالف أو بصيغة غير صالحة للتحميل.")
+                        except: pass
                     else: st.warning("لم يتم إرفاق ملف لهذا الترخيص.")
         else: st.info("لا يوجد تراخيص")
         
@@ -814,7 +851,7 @@ def owner_portal():
                         try:
                             decoded_draw = base64.b64decode(draw_content)
                             st.download_button("📥 تحميل لوحة الرسم", data=decoded_draw, file_name=f"{row['drawing_name']}_draw.pdf", mime="application/octet-stream", key=f"dl_drw_{row['drawing_name']}")
-                        except: st.warning("⚠️ ملف الرسم المرفق تالف أو بصيغة غير صالحة.")
+                        except: pass
                     else: st.warning("لم يتم إرفاق ملف للوحة.")
         else: st.info("لا يوجد رسومات")
         conn.close()
@@ -823,7 +860,6 @@ def accountant_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("المحاسب")
-    
     nav = st.radio("القائمة:", ["💰 إدارة الأقساط", "📄 إدارة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
     if nav == "💰 إدارة الأقساط":
         with st.form("add_fin"):
@@ -842,35 +878,8 @@ def accountant_portal():
         if not df.empty:
             df.columns = ['المشروع', 'النوع', 'المبلغ', 'تاريخ', 'الحالة']
             st.dataframe(df, hide_index=True)
-            
     elif nav == "📄 إدارة المستخلصات":
-        st.header("إدارة المستخلصات الهندسية")
-        conn = get_db_connection()
-        try:
-            ext_df = pd.read_sql_query("SELECT id, project_name, extract_name, amount, date, created_by, status, file_data FROM Extracts ORDER BY id DESC", conn)
-            if not ext_df.empty:
-                for _, row in ext_df.iterrows():
-                    with st.expander(f"مستخلص: {row['extract_name']} | المشروع: {row['project_name']} | الحالة: {row['status']}"):
-                        st.write(f"**القيمة:** {row['amount']} | **المهندس:** {row['created_by']} | **التاريخ:** {row['date']}")
-                        
-                        file_content = row['file_data']
-                        if file_content and isinstance(file_content, str) and len(file_content) > 10:
-                            try:
-                                decoded_bytes = base64.b64decode(file_content)
-                                st.download_button("📥 تحميل المستخلص للمراجعة", data=decoded_bytes, file_name=f"{row['extract_name']}.pdf", mime="application/octet-stream", key=f"dl_acc_ext_{row['id']}")
-                            except: pass
-                            
-                        # تغيير الحالة
-                        c1, c2, c3 = st.columns(3)
-                        if c1.button("✅ اعتماد وتم الصرف", key=f"pay_{row['id']}"):
-                            db_execute("UPDATE Extracts SET status='تم الصرف' WHERE id=%s", (row['id'],)); st.rerun()
-                        if c2.button("🔄 إعادة للمراجعة", key=f"rev_{row['id']}"):
-                            db_execute("UPDATE Extracts SET status='مراجعة نهائية' WHERE id=%s", (row['id'],)); st.rerun()
-                        if c3.button("❌ رفض المستخلص", key=f"rej_{row['id']}"):
-                            db_execute("UPDATE Extracts SET status='مرفوض' WHERE id=%s", (row['id'],)); st.rerun()
-            else: st.info("لا يوجد مستخلصات مرفوعة.")
-        except: st.warning("جاري تهيئة جداول المستخلصات.")
-        conn.close()
+        render_manage_extracts()
     else: render_employee_dashboard(emp_id, balance)
 
 def licensing_portal():
@@ -904,7 +913,8 @@ def engineer_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("المهندس")
-    nav = st.radio("القائمة:", ["📐 الرسومات (خزنة الملفات)", "📄 إنشاء مستخلص", "👤 لوحتي الشخصية"], horizontal=True)
+    # تم إزالة إنشاء مستخلص من هنا ليصبح حصرياً لمهندس المستخلصات
+    nav = st.radio("القائمة:", ["📐 الرسومات (خزنة الملفات)", "👤 لوحتي الشخصية"], horizontal=True)
     if nav == "📐 الرسومات (خزنة الملفات)":
         with st.form("add_draw"):
             c1, c2 = st.columns(2)
@@ -925,8 +935,18 @@ def engineer_portal():
         if not df.empty:
             df.columns = ['المشروع', 'اسم الرسم', 'تاريخ التسليم', 'الحالة']
             st.dataframe(df, hide_index=True)
-            
-    elif nav == "📄 إنشاء مستخلص":
+    else: render_employee_dashboard(emp_id, balance)
+
+# ==========================================
+# بوابة مهندس المستخلصات (Extracts Engineer) - بوابة جديدة
+# ==========================================
+def extracts_engineer_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+    render_sidebar("مهندس المستخلصات")
+    nav = st.radio("القائمة:", ["📄 إنشاء وإدارة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
+    
+    if nav == "📄 إنشاء وإدارة المستخلصات":
         st.header("إضافة ورفع مستخلص هندسي")
         with st.form("add_extract"):
             c1, c2 = st.columns(2)
@@ -934,9 +954,9 @@ def engineer_portal():
             ext_name = c2.text_input("اسم / رقم المستخلص")
             ext_amount = c1.number_input("القيمة المالية للمستخلص", min_value=0.0)
             ext_date = c2.date_input("تاريخ المستخلص")
-            uploaded_ext = st.file_uploader("إرفاق ملف المستخلص (PDF/صورة) للإدارة", type=['pdf', 'jpg', 'png'])
+            uploaded_ext = st.file_uploader("إرفاق ملف المستخلص (PDF/صورة) للحسابات", type=['pdf', 'jpg', 'png'])
             
-            if st.form_submit_button("رفع المستخلص للحسابات 🚀", type="primary"):
+            if st.form_submit_button("رفع المستخلص 🚀", type="primary"):
                 if ext_name and ext_amount > 0:
                     file_b64 = base64.b64encode(uploaded_ext.read()).decode('utf-8') if uploaded_ext else ""
                     db_execute("INSERT INTO Extracts (project_name, extract_name, amount, date, created_by, status, file_data) VALUES (%s, %s, %s, %s, %s, 'قيد المراجعة', %s)", (proj, ext_name, ext_amount, ext_date.strftime("%Y/%m/%d"), emp_name, file_b64))
@@ -944,17 +964,16 @@ def engineer_portal():
                 else: st.error("يرجى كتابة اسم المستخلص وتحديد قيمته!")
                 
         st.divider()
-        st.subheader("مستخلصاتي السابقة")
+        st.subheader("مستخلصاتي السابقة المرفوعة")
         conn = get_db_connection()
         try:
-            my_ext = pd.read_sql_query("SELECT project_name, extract_name, amount, date, status FROM Extracts WHERE created_by=%s ORDER BY id DESC", conn, params=(emp_name,))
+            my_ext = pd.read_sql_query("SELECT id, project_name, extract_name, amount, date, status FROM Extracts WHERE created_by=%s ORDER BY id DESC", conn, params=(emp_name,))
             if not my_ext.empty:
-                my_ext.columns = ['المشروع', 'المستخلص', 'القيمة', 'التاريخ', 'الحالة']
-                st.dataframe(my_ext, hide_index=True, use_container_width=True)
-            else: st.info("لم تقم برفع مستخلصات بعد.")
+                my_ext.columns = ['الرقم', 'المشروع', 'المستخلص', 'القيمة', 'التاريخ', 'الحالة']
+                st.dataframe(my_ext.drop(columns=['الرقم']), hide_index=True, use_container_width=True)
+            else: st.info("لم تقم برفع أي مستخلصات بعد.")
         except: pass
         conn.close()
-        
     else: render_employee_dashboard(emp_id, balance)
 
 def employee_portal():
@@ -980,7 +999,7 @@ def render_employee_dashboard(emp_id, balance):
     try:
         pending_tasks = db_fetchone("SELECT COUNT(*) FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", (emp_id,))[0]
         if pending_tasks > 0:
-            st.warning(f"🔔 **تنبيه عمل:** لديك ({pending_tasks}) مهمة مسندة من الإدارة بانتظار إنجازها! راجع قسم 'بصمة وتقارير وإنجاز مهام'.")
+            st.warning(f"🔔 **تنبيه عمل:** لديك ({pending_tasks}) مهمة مسندة بانتظار إنجازها! راجع قسم 'بصمة وتقارير'.")
     except: pass
 
     c1, c2, c3, c4 = st.columns(4)
@@ -1033,14 +1052,14 @@ def render_employee_dashboard(emp_id, balance):
                             if not tasks.empty:
                                 st.markdown("### 📋 المهام المسندة إليك من الإدارة")
                                 for _, row in tasks.iterrows():
-                                    with st.expander(f"🔴 مهمة مطلوبة بمشروع: {row['project_name']} (التسليم: {row['due_date']})"):
+                                    with st.expander(f"🔴 مهمة بمشروع: {row['project_name']} (التسليم: {row['due_date']})"):
                                         st.write(f"**التفاصيل:** {row['task_desc']}")
                                         task_reply = st.text_area("تقرير إنجاز المهمة", key=f"reply_{row['id']}")
                                         if st.button("إتمام المهمة ✅", key=f"done_{row['id']}", type="primary"):
                                             if task_reply.strip():
                                                 db_execute("UPDATE Tasks SET status='مكتملة', employee_reply=%s WHERE id=%s", (task_reply, row['id']))
                                                 db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'إنجاز مهمة', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, row['project_name'], "إنجاز مهمة مسندة: " + task_reply))
-                                                st.success("تم إغلاق المهمة وإرسال التقرير للمدير!"); st.rerun()
+                                                st.success("تم الإغلاق وإرسال التقرير للمدير!"); st.rerun()
                                             else: st.error("اكتب تقرير الإنجاز أولاً!")
                             
                             st.markdown("---")
@@ -1086,12 +1105,13 @@ def render_employee_dashboard(emp_id, balance):
 if not st.session_state['logged_in']: login_page()
 else:
     role = st.session_state['role']
-    if role == 'admin' or role == 'it': admin_portal() # توجيه مهندس الـ IT ليكون كمسؤول نظام
+    if role == 'admin' or role == 'it': admin_portal() 
     elif role == 'admin_manager': admin_manager_portal()
     elif role == 'manager': manager_portal()
     elif role == 'owner': owner_portal()
     elif role == 'accountant': accountant_portal()
     elif role == 'licensing': licensing_portal()
     elif role == 'engineer': engineer_portal()
-    elif role == 'hr': hr_portal() # توجيه موظف الموارد البشرية (HR)
+    elif role == 'extracts_engineer': extracts_engineer_portal() # توجيه مهندس المستخلصات
+    elif role == 'hr': hr_portal()
     else: employee_portal()
