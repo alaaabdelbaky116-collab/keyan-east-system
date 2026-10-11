@@ -119,30 +119,25 @@ COMPANY_DEPARTMENTS = [
 
 ROLE_OPTIONS = [
     "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
-    "موارد بشرية (HR)", "مهندس (Engineer)", "مهندس إدارة وتخطيط (Planning Engineer)",
+    "موارد بشرية (HR)", "مبيعات (Sales)", "مهندس (Engineer)", "مهندس إدارة وتخطيط (Planning Engineer)",
     "مهندس مستخلصات (Extracts Engineer)", "محاسب (Accountant)", 
     "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", "مسؤول نظام (Admin)", "مالك (Owner)"
 ]
 
 ROLE_MAP = {
-    "موظف عادي (Employee)": "employee", 
-    "رئيس قسم / مدير (Manager)": "manager", 
-    "مدير إداري (Admin Manager)": "admin_manager", 
-    "موارد بشرية (HR)": "hr", 
-    "مهندس (Engineer)": "engineer", 
+    "موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", 
+    "مدير إداري (Admin Manager)": "admin_manager", "موارد بشرية (HR)": "hr", 
+    "مبيعات (Sales)": "sales", "مهندس (Engineer)": "engineer", 
     "مهندس إدارة وتخطيط (Planning Engineer)": "planning_engineer",
-    "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer",
-    "محاسب (Accountant)": "accountant", 
-    "مسؤول تراخيص (Licensing)": "licensing", 
-    "مهندس IT (IT)": "it", 
-    "مسؤول نظام (Admin)": "admin", 
-    "مالك (Owner)": "owner"
+    "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer", "محاسب (Accountant)": "accountant", 
+    "مسؤول تراخيص (Licensing)": "licensing", "مهندس IT (IT)": "it", 
+    "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"
 }
 
 ROLE_REVERSE_MAP = {v: k for k, v in ROLE_MAP.items()}
 DISPLAY_MAP = {
     "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
-    "hr": "موارد بشرية", "engineer": "مهندس", "planning_engineer": "مهندس إدارة وتخطيط",
+    "hr": "موارد بشرية", "sales": "مبيعات", "engineer": "مهندس", "planning_engineer": "مهندس إدارة وتخطيط",
     "extracts_engineer": "مهندس مستخلصات", "accountant": "محاسب", 
     "licensing": "مسؤول تراخيص", "it": "مهندس IT", "admin": "مسؤول نظام", "owner": "المالك"
 }
@@ -163,7 +158,7 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# دالة التنبيهات الذكية للإدارة (Smart Alerts)
+# دالة التنبيهات الذكية للإدارة
 # ==========================================
 def render_smart_alerts():
     conn = get_db_connection()
@@ -230,7 +225,7 @@ def render_sidebar(role_title):
             st.rerun()
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL
+# 3. حماية وتجهيز جداول PostgreSQL (مع إعفاء التقرير)
 # ==========================================
 def init_db():
     try:
@@ -239,7 +234,7 @@ def init_db():
         cur = conn.cursor()
         
         cur.execute('''CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, role TEXT, emp_id TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS Employees (emp_id TEXT PRIMARY KEY, name TEXT, department TEXT, annual_balance INTEGER)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Employees (emp_id TEXT PRIMARY KEY, name TEXT, department TEXT, annual_balance INTEGER, phone TEXT, exempt_report BOOLEAN DEFAULT FALSE)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Permissions (emp_id TEXT, date TEXT, type TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Requests (id SERIAL PRIMARY KEY, emp_id TEXT, date TEXT, req_type TEXT, notes TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
@@ -254,6 +249,10 @@ def init_db():
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
         except: pass
         try: cur.execute("ALTER TABLE ProjectDrawings ADD COLUMN file_data TEXT")
+        except: pass
+        try: cur.execute("ALTER TABLE Employees ADD COLUMN phone TEXT")
+        except: pass
+        try: cur.execute("ALTER TABLE Employees ADD COLUMN exempt_report BOOLEAN DEFAULT FALSE")
         except: pass
             
         cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('admin', 'admin123', 'admin', '0') ON CONFLICT (username) DO UPDATE SET role='admin'")
@@ -392,7 +391,7 @@ def login_page():
                 else: st.error("بيانات الدخول غير صحيحة! يرجى المراجعة.")
 
 # ==========================================
-# دالة لوحة القيادة الشاملة (الداشبورد المودرن)
+# دالة لوحة القيادة الشاملة
 # ==========================================
 def render_company_dashboard():
     st.header("📊 المؤشرات الحيوية والتفاعلية للشركة")
@@ -492,7 +491,7 @@ def render_attendance_report(department_filter=None):
     else: st.info("لا توجد سجلات تطابق خيارات البحث.")
 
 # ==========================================
-# دالة مهام القسم (إسناد المهام للمديرين)
+# دالة مهام القسم
 # ==========================================
 def render_task_delegation(department):
     st.header("📋 إسناد مهام للموظفين (Task Delegation)")
@@ -518,7 +517,7 @@ def render_task_delegation(department):
             else: st.error("يرجى كتابة تفاصيل المهمة وتحديد الموظف.")
 
 # ==========================================
-# دالة موحدة لإدارة المستخلصات للمديرين والحسابات (وتخطيط)
+# دالة موحدة لإدارة المستخلصات
 # ==========================================
 def render_manage_extracts():
     st.header("📄 إدارة ومراجعة المستخلصات الهندسية")
@@ -527,8 +526,6 @@ def render_manage_extracts():
     emp_id = st.session_state.get('emp_id')
     _, emp_dept, _ = get_employee_info(emp_id)
     role = st.session_state.get('role', '')
-    
-    # تحديد إذا كان المستخدم مهندس إدارة وتخطيط (عن طريق الدور أو القسم)
     is_planning_auth = (role == 'planning_engineer') or (emp_dept == "مهندسين إدارة وتخطيط")
 
     try:
@@ -547,7 +544,6 @@ def render_manage_extracts():
                     
                     c1, c2, c3 = st.columns(3)
                     
-                    # عرض أزرار المراجعة الفنية فقط لمهندس التخطيط، والمراجعة المالية للحسابات والإدارة
                     if is_planning_auth:
                         if c1.button("✅ اعتماد فني وهندسي", key=f"eng_app_{row['id']}", type="primary"):
                             db_execute("UPDATE Extracts SET status='معتمد هندسياً (للحسابات)' WHERE id=%s", (row['id'],)); st.rerun()
@@ -602,12 +598,14 @@ def admin_portal():
             new_dept = c1.selectbox("القسم / الإدارة", COMPANY_DEPARTMENTS)
             role_choice = c2.selectbox("صلاحيات الحساب", ROLE_OPTIONS)
             new_user = c1.text_input("اسم المستخدم للدخول")
-            new_pwd = c2.text_input("كلمة المرور")
+            new_pwd = c1.text_input("كلمة المرور", type="password")
+            new_phone = c2.text_input("رقم الهاتف")
+            new_exempt = st.checkbox("✔️ إعفاء الموظف من إجبارية كتابة التقرير اليومي")
             
             if st.form_submit_button("إنشاء الحساب", type="primary"):
                 if new_user and new_pwd and new_emp_id and new_name:
                     try:
-                        db_execute("INSERT INTO Employees (emp_id, name, department, annual_balance) VALUES (%s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department", (new_emp_id, new_name, new_dept, DEFAULT_ANNUAL_BALANCE))
+                        db_execute("INSERT INTO Employees (emp_id, name, department, annual_balance, phone, exempt_report) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department, phone=EXCLUDED.phone, exempt_report=EXCLUDED.exempt_report", (new_emp_id, new_name, new_dept, DEFAULT_ANNUAL_BALANCE, new_phone, new_exempt))
                         db_execute("INSERT INTO Users (username, password, role, emp_id) VALUES (%s, %s, %s, %s)", (new_user, new_pwd, ROLE_MAP[role_choice], new_emp_id))
                         st.success(f"تم إنشاء حساب ({new_name}) بنجاح!")
                     except: st.error("اسم المستخدم مسجل مسبقاً!")
@@ -615,13 +613,14 @@ def admin_portal():
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
         conn = get_db_connection()
-        users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id", conn)
+        users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, e.phone, e.exempt_report, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id", conn)
         conn.close()
         
         if not users_df.empty:
             display_df = users_df.copy()
-            display_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'اسم الموظف', 'القسم', 'الصلاحية الحالية']
+            display_df.columns = ['اسم المستخدم', 'كلمة المرور', 'كود الموظف', 'اسم الموظف', 'القسم', 'رقم الهاتف', 'معفى من التقرير', 'الصلاحية الحالية']
             display_df['الصلاحية الحالية'] = display_df['الصلاحية الحالية'].map(DISPLAY_MAP)
+            display_df['معفى من التقرير'] = display_df['معفى من التقرير'].map({True: 'نعم', False: 'لا', None: 'لا'})
             st.dataframe(display_df, use_container_width=True, hide_index=True)
             
             st.divider()
@@ -631,6 +630,8 @@ def admin_portal():
             curr_emp_id = curr_data['emp_id']
             curr_name = curr_data['name'] if pd.notna(curr_data['name']) else ""
             curr_dept = curr_data['department'] if pd.notna(curr_data['department']) and curr_data['department'] in COMPANY_DEPARTMENTS else COMPANY_DEPARTMENTS[0]
+            curr_phone = curr_data['phone'] if pd.notna(curr_data['phone']) else ""
+            curr_exempt = curr_data['exempt_report'] if pd.notna(curr_data['exempt_report']) else False
             curr_role = curr_data['role']
             
             default_role_text = ROLE_REVERSE_MAP.get(curr_role, "موظف عادي (Employee)")
@@ -641,8 +642,11 @@ def admin_portal():
                 new_name = c2.text_input("تعديل اسم الموظف", value=curr_name)
                 new_dept = c1.selectbox("تعديل القسم", COMPANY_DEPARTMENTS, index=COMPANY_DEPARTMENTS.index(curr_dept) if curr_dept in COMPANY_DEPARTMENTS else 0)
                 new_username = c2.text_input("اسم المستخدم الجديد")
-                new_pwd = c1.text_input("كلمة المرور الجديدة")
+                new_pwd = c1.text_input("كلمة المرور الجديدة", type="password")
                 new_role_choice = c2.selectbox("الصلاحية الجديدة", ROLE_OPTIONS, index=role_index)
+                edit_phone = c1.text_input("تعديل رقم الهاتف", value=curr_phone)
+                edit_exempt = st.checkbox("✔️ إعفاء الموظف من إجبارية تقديم التقرير اليومي", value=bool(curr_exempt))
+                
                 if st.form_submit_button("تحديث البيانات", type="primary"):
                     final_username = new_username.strip() if new_username.strip() else selected_user
                     try:
@@ -652,7 +656,7 @@ def admin_portal():
                         params.append(selected_user)
                         db_execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=%s", tuple(params))
                         if curr_emp_id and str(curr_emp_id) not in ['0', 'owner']:
-                            db_execute("UPDATE Employees SET name=%s, department=%s WHERE emp_id=%s", (new_name.strip() if new_name.strip() else curr_name, new_dept, curr_emp_id))
+                            db_execute("UPDATE Employees SET name=%s, department=%s, phone=%s, exempt_report=%s WHERE emp_id=%s", (new_name.strip() if new_name.strip() else curr_name, new_dept, edit_phone, edit_exempt, curr_emp_id))
                         st.success("تم التحديث بنجاح!"); st.rerun()
                     except Exception as e: st.error(f"حدث خطأ: {e}")
 
@@ -789,10 +793,7 @@ def manager_portal():
     render_sidebar(f"رئيس قسم: {emp_dept}")
 
     nav_options = ["✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم", "👤 لوحتي الشخصية"]
-    
-    # التوجيه الذكي: إضافة مراجعة المستخلصات أوتوماتيكياً لو كان رئيس القسم من إدارة التخطيط
-    if emp_dept == "مهندسين إدارة وتخطيط":
-        nav_options.insert(3, "📄 مراجعة المستخلصات")
+    if emp_dept == "مهندسين إدارة وتخطيط": nav_options.insert(3, "📄 مراجعة المستخلصات")
 
     nav = st.radio("القائمة:", nav_options, horizontal=True)
     st.divider()
@@ -918,8 +919,7 @@ def accountant_portal():
         if not df.empty:
             df.columns = ['المشروع', 'النوع', 'المبلغ', 'تاريخ', 'الحالة']
             st.dataframe(df, hide_index=True)
-    elif nav == "📄 إدارة المستخلصات":
-        render_manage_extracts()
+    elif nav == "📄 إدارة المستخلصات": render_manage_extracts()
     else: render_employee_dashboard(emp_id, balance)
 
 def licensing_portal():
@@ -954,13 +954,10 @@ def engineer_portal():
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("المهندس")
     
-    # التوجيه الذكي للمهندس بناءً على القسم (بدون الاحتياج لتغيير الصلاحية)
     if emp_dept == "مهندسين إدارة وتخطيط":
         nav = st.radio("القائمة:", ["📄 مراجعة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
-        if nav == "📄 مراجعة المستخلصات":
-            render_manage_extracts()
-        else:
-            render_employee_dashboard(emp_id, balance)
+        if nav == "📄 مراجعة المستخلصات": render_manage_extracts()
+        else: render_employee_dashboard(emp_id, balance)
     else:
         nav = st.radio("القائمة:", ["📐 الرسومات (خزنة الملفات)", "👤 لوحتي الشخصية"], horizontal=True)
         if nav == "📐 الرسومات (خزنة الملفات)":
@@ -985,9 +982,6 @@ def engineer_portal():
                 st.dataframe(df, hide_index=True)
         else: render_employee_dashboard(emp_id, balance)
 
-# ==========================================
-# بوابة مهندس المستخلصات (Extracts Engineer)
-# ==========================================
 def extracts_engineer_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
@@ -1024,6 +1018,27 @@ def extracts_engineer_portal():
         conn.close()
     else: render_employee_dashboard(emp_id, balance)
 
+def planning_engineer_portal():
+    emp_id = st.session_state['emp_id']
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+    render_sidebar("مهندس إدارة وتخطيط")
+    
+    nav = st.radio("القائمة:", ["📄 مراجعة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
+    if nav == "📄 مراجعة المستخلصات": render_manage_extracts()
+    else: render_employee_dashboard(emp_id, balance)
+
+def sales_portal():
+    emp_id = st.session_state['emp_id']
+    _, _, balance = get_employee_info(emp_id)
+    render_sidebar("مبيعات")
+    render_employee_dashboard(emp_id, balance)
+
+def employee_portal():
+    emp_id = st.session_state['emp_id']
+    _, _, balance = get_employee_info(emp_id)
+    render_sidebar("موظف")
+    render_employee_dashboard(emp_id, balance)
+
 # ==========================================
 # 10. الشاشة المشتركة للجميع (البصمة، التقرير الحر، والمهام المسندة)
 # ==========================================
@@ -1031,6 +1046,12 @@ def render_employee_dashboard(emp_id, balance):
     month, delay_mins, absent_str, overtime_mins = get_employee_stats(emp_id)
     today_date = get_egypt_time().strftime("%Y/%m/%d")
     now_dt = get_egypt_time()
+    
+    try:
+        is_exempt = db_fetchone("SELECT exempt_report FROM Employees WHERE emp_id=%s", (emp_id,))
+        is_exempt = is_exempt[0] if is_exempt and is_exempt[0] is not None else False
+    except:
+        is_exempt = False
     
     try:
         has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
@@ -1107,18 +1128,26 @@ def render_employee_dashboard(emp_id, balance):
                             st.markdown("---")
                             st.markdown("### 📝 إضافة تقرير حر أو تسجيل انصراف")
                             selected_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)])
-                            daily_rep = st.text_area("تفاصيل الإنجاز الحر", placeholder="ماذا أنجزت اليوم ولم يكن في المهام؟")
+                            
+                            if is_exempt:
+                                st.info("💡 حسابك مُعفى من إجبارية تقديم التقرير اليومي، يمكنك تسجيل الانصراف مباشرة.")
+                                daily_rep = st.text_area("تفاصيل الإنجاز اليومي (اختياري)", placeholder="يمكنك تركه فارغاً...")
+                            else:
+                                daily_rep = st.text_area("تفاصيل الإنجاز اليومي (إجباري)*", placeholder="يجب كتابة ما أنجزته اليوم لتتمكن من رفع التقرير أو الانصراف...")
+
                             c_btn1, c_btn2 = st.columns(2)
                             with c_btn1:
                                 if st.button("➕ رفع التقرير الحر (مستمر بالعمل)", use_container_width=True):
-                                    if daily_rep.strip():
+                                    if is_exempt or daily_rep.strip():
                                         db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'تقرير', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
                                         st.success("تم حفظ إنجازك!")
-                                    else: st.error("اكتب التفاصيل أولاً!")
+                                    else: st.error("❌ عذراً، يجب كتابة التقرير اليومي أولاً!")
                             with c_btn2:
                                 if st.button("🔴 تسجيل انصراف نهائي اليوم", use_container_width=True):
-                                    db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
-                                    st.success("تم تسجيل الانصراف بنجاح!"); st.rerun() 
+                                    if is_exempt or daily_rep.strip():
+                                        db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
+                                        st.success("تم تسجيل الانصراف بنجاح!"); st.rerun() 
+                                    else: st.error("❌ عذراً، لا يمكنك تسجيل الانصراف بدون كتابة التقرير اليومي!")
                 else: st.error(f"❌ أنت خارج النطاق المسموح. أقرب موقع عمل لك هو ({closest_loc_name}) ويبعد عنك بمسافة {int(min_distance)} متر.")
             else: st.info("جاري تحديد موقعك الجغرافي... يرجى التأكد من تشغيل وتصريح الـ GPS للمتصفح.")
 
@@ -1155,6 +1184,7 @@ else:
     elif role == 'licensing': licensing_portal()
     elif role == 'engineer': engineer_portal()
     elif role == 'extracts_engineer': extracts_engineer_portal() 
-    elif role == 'planning_engineer': planning_engineer_portal() # (للأمان فقط إذا تم تعيينه يدوياً)
+    elif role == 'planning_engineer': planning_engineer_portal()
+    elif role == 'sales': sales_portal()
     elif role == 'hr': hr_portal()
     else: employee_portal()
