@@ -162,7 +162,7 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# دالة مولد تقارير الطباعة الرسمية (HTML to PDF) - معدلة للصف التجميعي
+# دالة مولد تقارير الطباعة الرسمية (HTML to PDF)
 # ==========================================
 def get_base64_image(image_path):
     try:
@@ -172,10 +172,7 @@ def get_base64_image(image_path):
 def generate_html_report(title, df):
     logo_b64 = get_base64_image(LOGO_FILE)
     logo_img = f'<img src="data:image/png;base64,{logo_b64}" alt="Logo" style="max-height: 80px;">' if logo_b64 else '<h2 style="color:#D4AF37;">كيان الشرقية</h2>'
-    
-    # تحويل الـ DataFrame لجدول HTML وتحديد كلاس خاص لصف الإجمالي
     html_table = df.to_html(index=False, classes='report-table', border=0)
-    # إضافة تنسيق لصف الإجمالي إذا كان موجوداً
     html_table = html_table.replace("<tr>\n      <td>إجمالي الساعات</td>", "<tr class='total-row'>\n      <td>إجمالي الساعات</td>")
     
     html_content = f"""
@@ -556,7 +553,7 @@ def calculate_hours_diff(check_in, check_out):
         in_time = datetime.strptime(str(check_in).strip(), "%H:%M")
         out_time = datetime.strptime(str(check_out).strip(), "%H:%M")
         diff_mins = (out_time - in_time).total_seconds() / 60
-        if diff_mins < 0: diff_mins += 24 * 60  # لحساب الورديات اللي بتعدي منتصف الليل
+        if diff_mins < 0: diff_mins += 24 * 60  
         hours = int(diff_mins // 60)
         mins = int(diff_mins % 60)
         return f"{hours}:{mins:02d}"
@@ -607,7 +604,6 @@ def render_attendance_report(department_filter=None):
         rep_df['اسم اليوم'] = rep_df['date_val'].dt.day_name().map(arabic_days)
         rep_df['التاريخ'] = rep_df['date_val'].dt.strftime('%Y/%m/%d')
         
-        # حساب ساعات العمل لكل صف (يوم)
         rep_df['ساعات العمل'] = rep_df.apply(lambda row: calculate_hours_diff(row['check_in'], row['check_out']), axis=1)
         
         final_df = rep_df[['التاريخ', 'اسم اليوم', 'emp_name', 'dept', 'check_in', 'check_out', 'ساعات العمل', 'loc', 'proj', 'rep', 'photo']]
@@ -618,7 +614,6 @@ def render_attendance_report(department_filter=None):
         
         csv_df = final_df.drop(columns=['صورة الإثبات'])
         
-        # حساب إجمالي الساعات للتقرير (الصف الأخير)
         total_mins = 0
         for val in csv_df['ساعات العمل']:
             if "⚠️" not in val and ":" in val:
@@ -629,7 +624,6 @@ def render_attendance_report(department_filter=None):
         
         total_str = f"{total_mins // 60}:{(total_mins % 60):02d} ساعة"
         
-        # إضافة صف التجميع
         summary_row = pd.DataFrame([{
             'التاريخ': 'إجمالي الساعات', 'اليوم': '', 'اسم الموظف': '', 'القسم الأساسي': '', 
             'الحضور': '', 'الانصراف': '', 'ساعات العمل': total_str, 
@@ -672,7 +666,7 @@ def render_task_delegation(department):
             else: st.error("يرجى كتابة تفاصيل المهمة وتحديد الموظف.")
 
 # ==========================================
-# 6. بوابة الإدارة (Admin / IT) (مع الصلاحيات الإضافية)
+# 6. بوابة الإدارة (Admin / IT)
 # ==========================================
 def admin_portal():
     render_sidebar("الإدارة التكنولوجية (IT/Admin)")
@@ -880,16 +874,23 @@ def get_extract_blocker(status):
     return status
 
 # ==========================================
-# دالة موحدة لإدارة المستخلصات (التخطيط والحسابات)
+# دالة موحدة لإدارة المستخلصات (التخطيط والحسابات) مع دعم الصلاحية المزدوجة
 # ==========================================
 def render_manage_extracts():
     st.header("📄 إدارة ومراجعة المستخلصات الهندسية")
     conn = get_db_connection()
     
-    role = st.session_state.get('role', '')
+    current_role = st.session_state.get('current_role', st.session_state.get('role', ''))
     emp_id = st.session_state.get('emp_id')
-    _, emp_dept, _ = get_employee_info(emp_id)
-    is_planning_auth = (role == 'planning_engineer') or (emp_dept == "مهندسين إدارة وتخطيط")
+    
+    try:
+        res = db_fetchone("SELECT department, secondary_department FROM Employees WHERE emp_id=%s", (emp_id,))
+        emp_dept = res[0] if res else ""
+        sec_dept = res[1] if res else ""
+    except:
+        emp_dept, sec_dept = "", ""
+        
+    is_planning_auth = (current_role == 'planning_engineer') or ("مهندسين إدارة وتخطيط" in [emp_dept, sec_dept])
 
     try:
         if is_planning_auth:
@@ -925,7 +926,7 @@ def render_manage_extracts():
                             if c1.button("✅ تم صرف المستخلص", key=f"pay_{row['id']}", type="primary"):
                                 db_execute("UPDATE Extracts SET status='تم الصرف' WHERE id=%s", (row['id'],)); st.rerun()
         else: st.info("لا يوجد مستخلصات في صندوق الوارد الخاص بإدارتك حالياً.")
-    except: st.warning("جاري تهيئة جداول المستخلصات.")
+    except Exception as e: st.warning(f"جاري تهيئة جداول المستخلصات. {e}")
     conn.close()
 
 # ==========================================
@@ -1257,12 +1258,33 @@ def admin_manager_portal():
 
 def manager_portal():
     emp_id = st.session_state['emp_id']
-    _, emp_dept, balance = get_employee_info(emp_id)
+    
+    try:
+        conn = get_db_connection()
+        res = pd.read_sql_query("SELECT name, department, secondary_department, annual_balance FROM Employees WHERE emp_id=%s", conn, params=(emp_id,))
+        conn.close()
+        if not res.empty:
+            emp_dept = res.iloc[0]['department']
+            sec_dept = res.iloc[0]['secondary_department']
+            balance = res.iloc[0]['annual_balance']
+        else:
+            emp_dept, sec_dept, balance = "", "", 21
+    except:
+        emp_dept, sec_dept, balance = "", "", 21
+        
     render_sidebar(f"رئيس قسم")
-    nav = st.radio("القائمة:", ["✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم", "👤 لوحتي الشخصية"], horizontal=True)
+    nav_options = ["✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم", "👤 لوحتي الشخصية"]
+    
+    if "مهندسين إدارة وتخطيط" in [emp_dept, sec_dept]:
+        nav_options.insert(3, "📄 مراجعة المستخلصات")
+    if "مبيعات وخدمة عملاء" in [emp_dept, sec_dept]:
+        nav_options.insert(3, "👥 إدارة العملاء (CRM)")
+
+    nav = st.radio("القائمة:", nav_options, horizontal=True)
     st.divider()
+    
     if nav == "✅ طلبات القسم":
-        st.header(f"طلبات الموظفين في قسمك")
+        st.header(f"طلبات الموظفين في إدارتك")
         conn = get_db_connection()
         reqs = pd.read_sql_query("SELECT r.id, r.emp_id, e.name, r.date, r.req_type, r.notes FROM Requests r JOIN Employees e ON r.emp_id = e.emp_id WHERE (e.department = %s OR e.secondary_department = %s) AND r.status = 'قيد الانتظار' AND r.emp_id != %s", conn, params=(emp_dept, emp_dept, emp_id))
         conn.close()
@@ -1277,6 +1299,8 @@ def manager_portal():
                         db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],)); st.rerun()
     elif nav == "📋 إسناد مهام للقسم": render_task_delegation(emp_dept)
     elif nav == "📝 تقارير دوام القسم": render_attendance_report(department_filter=emp_dept)
+    elif nav == "📄 مراجعة المستخلصات": render_manage_extracts()
+    elif nav == "👥 إدارة العملاء (CRM)": sales_portal()
     elif nav == "👤 لوحتي الشخصية": render_employee_dashboard(emp_id, balance)
 
 def owner_portal():
