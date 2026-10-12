@@ -119,7 +119,7 @@ COMPANY_DEPARTMENTS = [
 
 ROLE_OPTIONS = [
     "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
-    "موارد بشرية (HR)", "مبيعات وخدمة عملاء (Sales)", "مهندس (Engineer)", 
+    "موارد بشرية (HR)", "مبيعات (Sales)", "مهندس (Engineer)", 
     "مهندس إدارة وتخطيط (Planning Engineer)", "مهندس مستخلصات (Extracts Engineer)", 
     "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", 
     "مسؤول نظام (Admin)", "مالك (Owner)"
@@ -128,7 +128,7 @@ ROLE_OPTIONS = [
 ROLE_MAP = {
     "موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", 
     "مدير إداري (Admin Manager)": "admin_manager", "موارد بشرية (HR)": "hr", 
-    "مبيعات وخدمة عملاء (Sales)": "sales", "مهندس (Engineer)": "engineer", 
+    "مبيعات (Sales)": "sales", "مهندس (Engineer)": "engineer", 
     "مهندس إدارة وتخطيط (Planning Engineer)": "planning_engineer",
     "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer", "محاسب (Accountant)": "accountant", 
     "مسؤول تراخيص (Licensing)": "licensing", "مهندس IT (IT)": "it", 
@@ -138,10 +138,9 @@ ROLE_MAP = {
 ROLE_REVERSE_MAP = {v: k for k, v in ROLE_MAP.items()}
 DISPLAY_MAP = {
     "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
-    "hr": "موارد بشرية", "sales": "مبيعات وخدمة عملاء", "engineer": "مهندس", 
-    "planning_engineer": "مهندس إدارة وتخطيط", "extracts_engineer": "مهندس مستخلصات", 
-    "accountant": "محاسب", "licensing": "مسؤول تراخيص", "it": "مهندس IT", 
-    "admin": "مسؤول نظام", "owner": "المالك"
+    "hr": "موارد بشرية", "sales": "مبيعات", "engineer": "مهندس", "planning_engineer": "مهندس إدارة وتخطيط",
+    "extracts_engineer": "مهندس مستخلصات", "accountant": "محاسب", 
+    "licensing": "مسؤول تراخيص", "it": "مهندس IT", "admin": "مسؤول نظام", "owner": "المالك"
 }
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -227,7 +226,7 @@ def render_sidebar(role_title):
             st.rerun()
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL
+# 3. حماية وتجهيز جداول PostgreSQL (شاملة المبيعات ومعوقات المستخلصات)
 # ==========================================
 def init_db():
     try:
@@ -246,8 +245,9 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id SERIAL PRIMARY KEY, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, client_name TEXT, client_phone TEXT, project_interest TEXT, status TEXT, follow_up_notes TEXT, created_by TEXT, date TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT, impediment_notes TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS RealEstateUnits (id SERIAL PRIMARY KEY, project_name TEXT, unit_code TEXT, status TEXT, client_name TEXT, total_price REAL, notes TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS UnitInstallments (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, amount REAL, due_date TEXT, status TEXT)''')
         
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
         except: pass
@@ -256,6 +256,8 @@ def init_db():
         try: cur.execute("ALTER TABLE Employees ADD COLUMN phone TEXT")
         except: pass
         try: cur.execute("ALTER TABLE Employees ADD COLUMN exempt_report BOOLEAN DEFAULT FALSE")
+        except: pass
+        try: cur.execute("ALTER TABLE Extracts ADD COLUMN impediment_notes TEXT")
         except: pass
             
         cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES ('admin', 'admin123', 'admin', '0') ON CONFLICT (username) DO UPDATE SET role='admin'")
@@ -520,48 +522,63 @@ def render_task_delegation(department):
             else: st.error("يرجى كتابة تفاصيل المهمة وتحديد الموظف.")
 
 # ==========================================
-# دالة موحدة لإدارة المستخلصات
+# دالة تتبع المستخلص للمالك
+# ==========================================
+def get_extract_blocker(status):
+    if status == 'قيد التجهيز': return "مهندس المستخلصات (قيد التجهيز/يوجد معوقات)"
+    if status == 'بانتظار اعتماد التخطيط': return "إدارة التخطيط (للمراجعة والاعتماد)"
+    if status == 'بانتظار الصرف': return "إدارة الحسابات (جاهز للصرف)"
+    if status == 'تم الصرف': return "مكتمل وتم الصرف ✅"
+    if status == 'مرفوض فنياً': return "مرفوض - عاد لمهندس المستخلصات"
+    return status
+
+# ==========================================
+# دالة موحدة لإدارة المستخلصات (التخطيط والحسابات)
 # ==========================================
 def render_manage_extracts():
     st.header("📄 إدارة ومراجعة المستخلصات الهندسية")
     conn = get_db_connection()
     
+    role = st.session_state.get('role', '')
     emp_id = st.session_state.get('emp_id')
     _, emp_dept, _ = get_employee_info(emp_id)
-    role = st.session_state.get('role', '')
     is_planning_auth = (role == 'planning_engineer') or (emp_dept == "مهندسين إدارة وتخطيط")
 
     try:
-        ext_df = pd.read_sql_query("SELECT id, project_name, extract_name, amount, date, created_by, status, file_data FROM Extracts ORDER BY id DESC", conn)
+        # استدعاء المستخلصات بناءً على دور الشخص
+        if is_planning_auth:
+            query = "SELECT id, project_name, extract_name, amount, date, created_by, status, file_data, impediment_notes FROM Extracts WHERE status = 'بانتظار اعتماد التخطيط' ORDER BY id DESC"
+        else: # الحسابات والإدارة
+            query = "SELECT id, project_name, extract_name, amount, date, created_by, status, file_data, impediment_notes FROM Extracts WHERE status IN ('بانتظار الصرف', 'تم الصرف') ORDER BY id DESC"
+            
+        ext_df = pd.read_sql_query(query, conn)
+        
         if not ext_df.empty:
             for _, row in ext_df.iterrows():
                 with st.expander(f"مستخلص: {row['extract_name']} | المشروع: {row['project_name']} | الحالة: {row['status']}"):
                     st.write(f"**القيمة:** {row['amount']} | **بواسطة:** {row['created_by']} | **التاريخ:** {row['date']}")
+                    if pd.notna(row['impediment_notes']) and row['impediment_notes'].strip() != "":
+                        st.warning(f"**معوقات وملاحظات المهندس:** {row['impediment_notes']}")
+                        
                     file_content = row['file_data']
                     if file_content and isinstance(file_content, str) and len(file_content) > 10:
                         try:
                             decoded_bytes = base64.b64decode(file_content)
                             st.download_button("📥 تحميل المستخلص للمراجعة", data=decoded_bytes, file_name=f"{row['extract_name']}.pdf", mime="application/octet-stream", key=f"dl_mng_ext_{row['id']}")
                         except: pass
-                    else: st.warning("لا يوجد ملف مرفق.")
+                    else: st.info("لا يوجد ملف مرفق.")
                     
-                    c1, c2, c3 = st.columns(3)
-                    
+                    c1, c2 = st.columns(2)
                     if is_planning_auth:
-                        if c1.button("✅ اعتماد فني وهندسي", key=f"eng_app_{row['id']}", type="primary"):
-                            db_execute("UPDATE Extracts SET status='معتمد هندسياً (للحسابات)' WHERE id=%s", (row['id'],)); st.rerun()
-                        if c2.button("🔄 إعادة للتعديل", key=f"eng_rev_{row['id']}"):
-                            db_execute("UPDATE Extracts SET status='مطلوب تعديلات' WHERE id=%s", (row['id'],)); st.rerun()
-                        if c3.button("❌ رفض فني", key=f"eng_rej_{row['id']}"):
+                        if c1.button("✅ اعتماد فني وتحويل للحسابات", key=f"eng_app_{row['id']}", type="primary"):
+                            db_execute("UPDATE Extracts SET status='بانتظار الصرف' WHERE id=%s", (row['id'],)); st.rerun()
+                        if c2.button("❌ إرجاع لوجود مشاكل فنية", key=f"eng_rej_{row['id']}"):
                             db_execute("UPDATE Extracts SET status='مرفوض فنياً' WHERE id=%s", (row['id'],)); st.rerun()
                     else:
-                        if c1.button("✅ اعتماد وتم الصرف", key=f"pay_{row['id']}", type="primary"):
-                            db_execute("UPDATE Extracts SET status='تم الصرف' WHERE id=%s", (row['id'],)); st.rerun()
-                        if c2.button("🔄 إعادة للمراجعة", key=f"rev_{row['id']}"):
-                            db_execute("UPDATE Extracts SET status='مراجعة نهائية' WHERE id=%s", (row['id'],)); st.rerun()
-                        if c3.button("❌ رفض المستخلص", key=f"rej_{row['id']}"):
-                            db_execute("UPDATE Extracts SET status='مرفوض' WHERE id=%s", (row['id'],)); st.rerun()
-        else: st.info("لا يوجد مستخلصات مرفوعة حتى الآن.")
+                        if row['status'] != 'تم الصرف':
+                            if c1.button("✅ تم صرف المستخلص", key=f"pay_{row['id']}", type="primary"):
+                                db_execute("UPDATE Extracts SET status='تم الصرف' WHERE id=%s", (row['id'],)); st.rerun()
+        else: st.info("لا يوجد مستخلصات في صندوق الوارد الخاص بإدارتك حالياً.")
     except: st.warning("جاري تهيئة جداول المستخلصات.")
     conn.close()
 
@@ -733,7 +750,9 @@ def admin_portal():
                     except: pass
                     try: pd.read_sql_query("SELECT * FROM Extracts", conn).to_excel(writer, sheet_name='Extracts', index=False)
                     except: pass
-                    try: pd.read_sql_query("SELECT * FROM Clients", conn).to_excel(writer, sheet_name='Clients', index=False)
+                    try: pd.read_sql_query("SELECT * FROM RealEstateUnits", conn).to_excel(writer, sheet_name='Units', index=False)
+                    except: pass
+                    try: pd.read_sql_query("SELECT * FROM UnitInstallments", conn).to_excel(writer, sheet_name='UnitInstallments', index=False)
                     except: pass
                 conn.close()
                 st.download_button(label="💾 اضغط هنا لتحميل ملف الـ Excel الآن", data=output.getvalue(), file_name=f"Keyan_Backup_{get_egypt_time().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -765,7 +784,7 @@ def admin_manager_portal():
     render_sidebar("المدير الإداري")
     render_smart_alerts()
 
-    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "✅ طلبات الموظفين", "📋 إسناد مهام", "📄 إدارة المستخلصات", "📝 تقارير الحضور", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "✅ طلبات الموظفين", "📋 إسناد مهام", "📝 تقارير الحضور", "👤 لوحتي الشخصية"], horizontal=True)
     st.divider()
     
     if nav == "📊 لوحة القيادة": render_company_dashboard()
@@ -785,7 +804,6 @@ def admin_manager_portal():
                     if c2.button("رفض الطلب", key=f"rej_{row['id']}"):
                         db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],)); st.rerun()
     elif nav == "📋 إسناد مهام": render_task_delegation("الكل")
-    elif nav == "📄 إدارة المستخلصات": render_manage_extracts()
     elif nav == "📝 تقارير الحضور": render_attendance_report()
     elif nav == "👤 لوحتي الشخصية": render_employee_dashboard(emp_id, balance)
 
@@ -798,11 +816,6 @@ def manager_portal():
     render_sidebar(f"رئيس قسم: {emp_dept}")
 
     nav_options = ["✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم", "👤 لوحتي الشخصية"]
-    if emp_dept == "مهندسين إدارة وتخطيط":
-        nav_options.insert(3, "📄 مراجعة المستخلصات")
-    elif emp_dept == "مبيعات وخدمة عملاء":
-        nav_options.insert(3, "👥 إدارة العملاء (CRM)")
-
     nav = st.radio("القائمة:", nav_options, horizontal=True)
     st.divider()
 
@@ -822,8 +835,6 @@ def manager_portal():
                         db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],)); st.rerun()
     elif nav == "📋 إسناد مهام للقسم": render_task_delegation(emp_dept)
     elif nav == "📝 تقارير دوام القسم": render_attendance_report(department_filter=emp_dept)
-    elif nav == "📄 مراجعة المستخلصات": render_manage_extracts()
-    elif nav == "👥 إدارة العملاء (CRM)": sales_portal()
     elif nav == "👤 لوحتي الشخصية": render_employee_dashboard(emp_id, balance)
 
 # ==========================================
@@ -834,7 +845,7 @@ def owner_portal():
     render_smart_alerts()
     
     st.title("👑 لوحة تحكم المالك")
-    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "📈 الموقف المالي والهندسي", "👥 تقارير المبيعات"], horizontal=True)
+    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "📈 الموقف المالي والمستخلصات", "🏢 مبيعات ووحدات"], horizontal=True)
     st.divider()
 
     if nav == "📊 لوحة القيادة": render_company_dashboard()
@@ -848,81 +859,49 @@ def owner_portal():
             st.dataframe(reports, use_container_width=True, hide_index=True)
         else: st.info("لا يوجد تقارير مسجلة لهذا المشروع.")
         conn.close()
-    elif nav == "📈 الموقف المالي والهندسي":
+    elif nav == "📈 الموقف المالي والمستخلصات":
         conn = get_db_connection()
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع:", project_list)
         
-        st.markdown("### 💰 الأقساط المالية")
+        st.markdown("### 💰 الأقساط المالية (مقاولات)")
         fin_df = pd.read_sql_query("SELECT installment_type, amount, due_date, status FROM ProjectFinancials WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
         if not fin_df.empty: st.dataframe(fin_df, use_container_width=True, hide_index=True)
         else: st.info("لا يوجد أقساط")
         
-        st.markdown("### 📄 المستخلصات الهندسية (المرفوعة)")
+        st.markdown("### 📄 تتبع المستخلصات الهندسية")
         try:
-            ext_df = pd.read_sql_query("SELECT id, extract_name, amount, date, created_by, status, file_data FROM Extracts WHERE project_name = %s ORDER BY id DESC", conn, params=(selected_project,))
+            ext_df = pd.read_sql_query("SELECT id, extract_name, amount, date, created_by, status, impediment_notes FROM Extracts WHERE project_name = %s ORDER BY id DESC", conn, params=(selected_project,))
             if not ext_df.empty:
                 for _, row in ext_df.iterrows():
+                    # تحديد مكان العطل بذكاء
+                    blocker = get_extract_blocker(row['status'])
                     with st.expander(f"مستخلص: {row['extract_name']} | القيمة: {row['amount']} | الحالة: {row['status']}"):
-                        st.write(f"بواسطة: {row['created_by']} | بتاريخ: {row['date']}")
-                        file_content = row['file_data']
-                        if file_content and isinstance(file_content, str) and len(file_content) > 10:
-                            try:
-                                decoded_bytes = base64.b64decode(file_content)
-                                st.download_button("📥 تحميل المستخلص المرفق", data=decoded_bytes, file_name=f"{row['extract_name']}_extract.pdf", mime="application/octet-stream", key=f"dl_own_ext_{row['id']}")
-                            except: pass
-                        else: st.warning("لم يتم إرفاق ملف لهذا المستخلص.")
+                        st.write(f"**تاريخ الإنشاء:** {row['date']} | **بواسطة:** {row['created_by']}")
+                        st.success(f"📍 **المستخلص الآن عند:** {blocker}")
+                        if pd.notna(row['impediment_notes']) and row['impediment_notes'].strip() != "":
+                            st.warning(f"**معوقات وملاحظات مسجلة:** {row['impediment_notes']}")
             else: st.info("لا يوجد مستخلصات لهذا المشروع.")
         except: pass
-        
-        st.markdown("### 📜 التراخيص ومستنداتها")
-        lic_df = pd.read_sql_query("SELECT license_name, due_date, status, file_data FROM ProjectLicenses WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
-        if not lic_df.empty:
-            for _, row in lic_df.iterrows():
-                with st.expander(f"ترخيص: {row['license_name']} | الحالة: {row['status']}"):
-                    st.write(f"تاريخ الانتهاء: {row['due_date']}")
-                    file_content = row['file_data']
-                    if file_content and isinstance(file_content, str) and len(file_content) > 10:
-                        try:
-                            decoded_bytes = base64.b64decode(file_content)
-                            st.download_button("📥 تحميل المستند المرفق", data=decoded_bytes, file_name=f"{row['license_name']}_doc.pdf", mime="application/octet-stream", key=f"dl_lic_{row['license_name']}")
-                        except: pass
-                    else: st.warning("لم يتم إرفاق ملف لهذا الترخيص.")
-        else: st.info("لا يوجد تراخيص")
-        
-        st.markdown("### 📐 الرسومات الهندسية")
-        draw_df = pd.read_sql_query("SELECT drawing_name, due_date, status, file_data FROM ProjectDrawings WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
-        if not draw_df.empty:
-            for _, row in draw_df.iterrows():
-                with st.expander(f"رسم: {row['drawing_name']} | الحالة: {row['status']}"):
-                    st.write(f"تاريخ التسليم: {row['due_date']}")
-                    draw_content = row['file_data']
-                    if draw_content and isinstance(draw_content, str) and len(draw_content) > 10:
-                        try:
-                            decoded_draw = base64.b64decode(draw_content)
-                            st.download_button("📥 تحميل لوحة الرسم", data=decoded_draw, file_name=f"{row['drawing_name']}_draw.pdf", mime="application/octet-stream", key=f"dl_drw_{row['drawing_name']}")
-                        except: pass
-                    else: st.warning("لم يتم إرفاق ملف للوحة.")
-        else: st.info("لا يوجد رسومات")
         conn.close()
-
-    elif nav == "👥 تقارير المبيعات":
-        st.header("إحصائيات المبيعات وخدمة العملاء")
+    elif nav == "🏢 مبيعات ووحدات":
+        st.header("إحصائيات مبيعات الوحدات العقارية")
         conn = get_db_connection()
         try:
-            clients_df = pd.read_sql_query("SELECT client_name, client_phone, project_interest, status, created_by, date FROM Clients ORDER BY id DESC", conn)
-            if not clients_df.empty:
-                clients_df.columns = ['الاسم', 'الموبايل', 'المشروع المهتم به', 'الحالة', 'المسؤول', 'تاريخ الإضافة']
-                st.dataframe(clients_df, use_container_width=True, hide_index=True)
+            units_df = pd.read_sql_query("SELECT project_name, unit_code, status, client_name, total_price FROM RealEstateUnits ORDER BY id DESC", conn)
+            if not units_df.empty:
+                st.subheader("الوحدات المضافة وحالتها")
+                units_df.columns = ['المشروع', 'رقم الوحدة', 'الحالة', 'اسم العميل', 'الإجمالي']
+                st.dataframe(units_df, use_container_width=True, hide_index=True)
                 
-                st.markdown("### توزيع حالات العملاء")
-                fig = px.pie(clients_df, names="الحالة", hole=0.4, color_discrete_sequence=px.colors.sequential.YlOrBr)
-                fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_family="Tajawal", font_color="#fff")
-                st.plotly_chart(fig, use_container_width=True)
+                inst_df = pd.read_sql_query("SELECT unit_code, client_name, amount, due_date, status FROM UnitInstallments ORDER BY due_date ASC", conn)
+                if not inst_df.empty:
+                    st.subheader("أقساط العملاء وتواريخ الاستحقاق")
+                    inst_df.columns = ['الوحدة', 'العميل', 'المبلغ', 'تاريخ الاستحقاق', 'الحالة']
+                    st.dataframe(inst_df, use_container_width=True, hide_index=True)
             else:
-                st.info("لا توجد بيانات مسجلة في قسم المبيعات.")
-        except:
-            st.warning("جاري تهيئة قاعدة بيانات المبيعات.")
+                st.info("لا توجد وحدات أو مبيعات مسجلة حتى الآن.")
+        except: pass
         conn.close()
 
 def accountant_portal():
@@ -982,135 +961,172 @@ def engineer_portal():
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("المهندس")
     
-    if emp_dept == "مهندسين إدارة وتخطيط":
-        nav = st.radio("القائمة:", ["📄 مراجعة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
-        if nav == "📄 مراجعة المستخلصات": render_manage_extracts()
-        else: render_employee_dashboard(emp_id, balance)
-    else:
-        nav = st.radio("القائمة:", ["📐 الرسومات (خزنة الملفات)", "👤 لوحتي الشخصية"], horizontal=True)
-        if nav == "📐 الرسومات (خزنة الملفات)":
-            with st.form("add_draw"):
-                c1, c2 = st.columns(2)
-                proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
-                draw_name = c2.text_input("اسم الرسم")
-                due_date = c1.date_input("التسليم")
-                status = c2.selectbox("الحالة", ["قيد التنفيذ", "تحت المراجعة", "مكتملة"])
-                uploaded_file = st.file_uploader("إرفاق لوحة الرسم (PDF/صورة) - أقل من 5 ميجا", type=['pdf', 'jpg', 'png', 'dwg'])
+    nav = st.radio("القائمة:", ["📐 الرسومات (خزنة الملفات)", "👤 لوحتي الشخصية"], horizontal=True)
+    if nav == "📐 الرسومات (خزنة الملفات)":
+        with st.form("add_draw"):
+            c1, c2 = st.columns(2)
+            proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
+            draw_name = c2.text_input("اسم الرسم")
+            due_date = c1.date_input("التسليم")
+            status = c2.selectbox("الحالة", ["قيد التنفيذ", "تحت المراجعة", "مكتملة"])
+            uploaded_file = st.file_uploader("إرفاق لوحة الرسم (PDF/صورة) - أقل من 5 ميجا", type=['pdf', 'jpg', 'png', 'dwg'])
+            
+            if st.form_submit_button("تسجيل الرسم", type="primary") and draw_name:
+                file_b64 = base64.b64encode(uploaded_file.read()).decode('utf-8') if uploaded_file else ""
+                db_execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status, file_data) VALUES (%s, %s, %s, %s, %s)", (proj, draw_name, due_date.strftime("%Y/%m/%d"), status, file_b64))
+                st.success("تم التسجيل ورفع اللوحة بنجاح!")
                 
-                if st.form_submit_button("تسجيل الرسم", type="primary") and draw_name:
-                    file_b64 = base64.b64encode(uploaded_file.read()).decode('utf-8') if uploaded_file else ""
-                    db_execute("INSERT INTO ProjectDrawings (project_name, drawing_name, due_date, status, file_data) VALUES (%s, %s, %s, %s, %s)", (proj, draw_name, due_date.strftime("%Y/%m/%d"), status, file_b64))
-                    st.success("تم التسجيل ورفع اللوحة بنجاح!")
-                    
-            conn = get_db_connection()
-            df = pd.read_sql_query("SELECT project_name, drawing_name, due_date, status FROM ProjectDrawings", conn)
-            conn.close()
-            if not df.empty:
-                df.columns = ['المشروع', 'اسم الرسم', 'تاريخ التسليم', 'الحالة']
-                st.dataframe(df, hide_index=True)
-        else: render_employee_dashboard(emp_id, balance)
+        conn = get_db_connection()
+        df = pd.read_sql_query("SELECT project_name, drawing_name, due_date, status FROM ProjectDrawings", conn)
+        conn.close()
+        if not df.empty:
+            df.columns = ['المشروع', 'اسم الرسم', 'تاريخ التسليم', 'الحالة']
+            st.dataframe(df, hide_index=True)
+    else: render_employee_dashboard(emp_id, balance)
 
+# ==========================================
+# دالة مهندس المستخلصات (سير عمل دقيق)
+# ==========================================
 def extracts_engineer_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("مهندس المستخلصات")
-    nav = st.radio("القائمة:", ["📄 إنشاء وإدارة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["📄 إنشاء وتجهيز مستخلص", "👤 لوحتي الشخصية"], horizontal=True)
     
-    if nav == "📄 إنشاء وإدارة المستخلصات":
-        st.header("إضافة ورفع مستخلص هندسي")
+    if nav == "📄 إنشاء وتجهيز مستخلص":
+        st.header("إضافة مستخلص جديد وتجهيزه")
         with st.form("add_extract"):
             c1, c2 = st.columns(2)
             proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
             ext_name = c2.text_input("اسم / رقم المستخلص")
-            ext_amount = c1.number_input("القيمة المالية للمستخلص", min_value=0.0)
-            ext_date = c2.date_input("تاريخ المستخلص")
-            uploaded_ext = st.file_uploader("إرفاق ملف المستخلص (PDF/صورة) للحسابات", type=['pdf', 'jpg', 'png'])
+            ext_amount = c1.number_input("القيمة المالية (المبدئية)", min_value=0.0)
+            ext_date = c2.date_input("تاريخ الإنشاء")
+            impediment = st.text_input("أسباب التعطيل / النواقص (إن وجدت) مثل: حصر موقع، حصر مكتب فني...")
+            uploaded_ext = st.file_uploader("إرفاق مسودة المستخلص (PDF) - اختياري حالياً", type=['pdf', 'jpg', 'png'])
             
-            if st.form_submit_button("رفع المستخلص 🚀", type="primary"):
+            if st.form_submit_button("حفظ كمستخلص قيد التجهيز 💾", type="primary"):
                 if ext_name and ext_amount > 0:
                     file_b64 = base64.b64encode(uploaded_ext.read()).decode('utf-8') if uploaded_ext else ""
-                    db_execute("INSERT INTO Extracts (project_name, extract_name, amount, date, created_by, status, file_data) VALUES (%s, %s, %s, %s, %s, 'قيد المراجعة', %s)", (proj, ext_name, ext_amount, ext_date.strftime("%Y/%m/%d"), emp_name, file_b64))
-                    st.success("تم رفع المستخلص بنجاح وهو الآن بانتظار الاعتماد!")
+                    db_execute("INSERT INTO Extracts (project_name, extract_name, amount, date, created_by, status, file_data, impediment_notes) VALUES (%s, %s, %s, %s, %s, 'قيد التجهيز', %s, %s)", (proj, ext_name, ext_amount, ext_date.strftime("%Y/%m/%d"), emp_name, file_b64, impediment))
+                    st.success("تم إضافة المستخلص لحسابك للعمل عليه!")
                 else: st.error("يرجى كتابة اسم المستخلص وتحديد قيمته!")
                 
         st.divider()
-        st.subheader("مستخلصاتي السابقة المرفوعة")
+        st.subheader("مستخلصاتي (العمل الحالي)")
         conn = get_db_connection()
         try:
-            my_ext = pd.read_sql_query("SELECT id, project_name, extract_name, amount, date, status FROM Extracts WHERE created_by=%s ORDER BY id DESC", conn, params=(emp_name,))
+            my_ext = pd.read_sql_query("SELECT id, project_name, extract_name, amount, status, impediment_notes FROM Extracts WHERE created_by=%s ORDER BY id DESC", conn, params=(emp_name,))
             if not my_ext.empty:
-                my_ext.columns = ['الرقم', 'المشروع', 'المستخلص', 'القيمة', 'التاريخ', 'الحالة']
-                st.dataframe(my_ext.drop(columns=['الرقم']), hide_index=True, use_container_width=True)
-            else: st.info("لم تقم برفع أي مستخلصات بعد.")
+                for _, row in my_ext.iterrows():
+                    with st.expander(f"{row['extract_name']} | المشروع: {row['project_name']} | الحالة: {row['status']}"):
+                        st.write(f"**القيمة المبدئية:** {row['amount']}")
+                        
+                        # تحديث المعوقات أو إصدار
+                        if row['status'] in ['قيد التجهيز', 'مرفوض فنياً', 'مطلوب تعديلات']:
+                            new_imped = st.text_input("تحديث المعوقات أو النواقص:", value=row['impediment_notes'] if pd.notna(row['impediment_notes']) else "", key=f"imp_{row['id']}")
+                            col1, col2 = st.columns(2)
+                            if col1.button("تحديث النواقص 📝", key=f"upd_{row['id']}"):
+                                db_execute("UPDATE Extracts SET impediment_notes=%s WHERE id=%s", (new_imped, row['id'])); st.rerun()
+                            if col2.button("🚀 إصدار المستخلص (إرسال للتخطيط)", key=f"iss_{row['id']}", type="primary"):
+                                db_execute("UPDATE Extracts SET status='بانتظار اعتماد التخطيط', impediment_notes='تم الإنجاز - بانتظار الاعتماد' WHERE id=%s", (row['id'],)); st.rerun()
+                        else:
+                            st.info("تم إصدار هذا المستخلص ولم يعد في عهدتك.")
+            else: st.info("لا توجد مستخلصات حالياً.")
         except: pass
         conn.close()
     else: render_employee_dashboard(emp_id, balance)
 
+# ==========================================
+# بوابة مهندس الإدارة والتخطيط
+# ==========================================
 def planning_engineer_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("مهندس إدارة وتخطيط")
     
-    nav = st.radio("القائمة:", ["📄 مراجعة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
-    if nav == "📄 مراجعة المستخلصات": render_manage_extracts()
+    nav = st.radio("القائمة:", ["📄 مراجعة واعتماد المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
+    if nav == "📄 مراجعة واعتماد المستخلصات": render_manage_extracts()
     else: render_employee_dashboard(emp_id, balance)
 
-# بوابة المبيعات وخدمة العملاء
+# ==========================================
+# بوابة المبيعات وخدمة العملاء (Units & Installments)
+# ==========================================
 def sales_portal():
     emp_id = st.session_state['emp_id']
     emp_name, emp_dept, balance = get_employee_info(emp_id)
     render_sidebar("المبيعات وخدمة العملاء")
     
-    nav = st.radio("القائمة:", ["👥 إدارة العملاء (CRM)", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["🏢 إدارة الوحدات والمبيعات", "💸 أقساط العملاء", "👤 لوحتي الشخصية"], horizontal=True)
     st.divider()
     
-    if nav == "👥 إدارة العملاء (CRM)":
-        st.header("إضافة ومتابعة بيانات العملاء")
-        with st.form("add_client"):
-            c1, c2 = st.columns(2)
-            c_name = c2.text_input("اسم العميل")
-            c_phone = c1.text_input("رقم الهاتف")
-            c_proj = c2.selectbox("المشروع المهتم به", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى"])
-            c_status = c1.selectbox("حالة العميل", ["مهتم", "مؤجل", "تم التعاقد", "غير مهتم"])
-            c_notes = st.text_area("ملاحظات المتابعة")
+    if nav == "🏢 إدارة الوحدات والمبيعات":
+        st.header("إضافة ومتابعة الوحدات العقارية")
+        with st.form("add_unit"):
+            c1, c2, c3 = st.columns(3)
+            u_proj = c3.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
+            u_code = c2.text_input("رقم / كود الوحدة")
+            u_status = c1.selectbox("حالة الوحدة", ["متاحة", "مباعة", "محجوزة"])
             
-            if st.form_submit_button("تسجيل بيانات العميل", type="primary"):
-                if c_name and c_phone:
-                    today_str = get_egypt_time().strftime("%Y/%m/%d")
-                    db_execute("INSERT INTO Clients (client_name, client_phone, project_interest, status, follow_up_notes, created_by, date) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
-                               (c_name, c_phone, c_proj, c_status, c_notes, emp_name, today_str))
-                    st.success("تم تسجيل بيانات العميل بنجاح!")
-                else:
-                    st.error("يرجى إدخال اسم العميل ورقم الهاتف على الأقل.")
+            c4, c5 = st.columns(2)
+            u_client = c5.text_input("اسم العميل (إن وجد)")
+            u_price = c4.number_input("إجمالي السعر (جنية)", min_value=0.0)
+            u_notes = st.text_input("ملاحظات إضافية")
+            
+            if st.form_submit_button("تسجيل / تحديث بيانات الوحدة", type="primary"):
+                if u_code and u_proj:
+                    # لو موجودة هيحدثها، لو مش موجودة هيضيفها
+                    db_execute("INSERT INTO RealEstateUnits (project_name, unit_code, status, client_name, total_price, notes) VALUES (%s, %s, %s, %s, %s, %s)", 
+                               (u_proj, u_code, u_status, u_client, u_price, u_notes))
+                    st.success("تم تحديث حالة الوحدة بنجاح!")
+                else: st.error("يرجى إدخال اسم المشروع وكود الوحدة.")
                     
         st.divider()
-        st.subheader("قاعدة بيانات العملاء الخاصة بي")
+        st.subheader("حالة الوحدات المضافة")
         conn = get_db_connection()
         try:
-            if st.session_state['role'] in ['manager', 'admin_manager', 'owner']:
-                clients_df = pd.read_sql_query("SELECT id, client_name, client_phone, project_interest, status, follow_up_notes, created_by, date FROM Clients ORDER BY id DESC", conn)
+            units_df = pd.read_sql_query("SELECT project_name, unit_code, status, client_name, total_price, notes FROM RealEstateUnits ORDER BY id DESC", conn)
+            if not units_df.empty:
+                units_df.columns = ['المشروع', 'الرقم/الكود', 'الحالة', 'اسم العميل', 'الإجمالي', 'ملاحظات']
+                st.dataframe(units_df, use_container_width=True, hide_index=True)
+            else: st.info("لا توجد وحدات مسجلة.")
+        except: pass
+        conn.close()
+        
+    elif nav == "💸 أقساط العملاء":
+        st.header("إدارة أقساط الوحدات المباعة ومواعيد الاستحقاق")
+        conn = get_db_connection()
+        try:
+            units_list = pd.read_sql_query("SELECT unit_code, client_name FROM RealEstateUnits WHERE status IN ('مباعة', 'محجوزة')", conn)
+        except: units_list = pd.DataFrame()
+        
+        with st.form("add_installment"):
+            c1, c2 = st.columns(2)
+            if not units_list.empty:
+                unit_options = units_list['unit_code'] + " - " + units_list['client_name']
+                i_unit = c2.selectbox("اختر الوحدة والعميل", unit_options)
             else:
-                clients_df = pd.read_sql_query("SELECT id, client_name, client_phone, project_interest, status, follow_up_notes, date FROM Clients WHERE created_by=%s ORDER BY id DESC", conn, params=(emp_name,))
+                i_unit = c2.text_input("كود الوحدة والعميل (لا يوجد وحدات مباعة مسجلة)")
                 
-            if not clients_df.empty:
-                display_cols = ['الاسم', 'الموبايل', 'المشروع', 'الحالة', 'الملاحظات', 'بواسطة', 'التاريخ'] if 'created_by' in clients_df.columns else ['الاسم', 'الموبايل', 'المشروع', 'الحالة', 'الملاحظات', 'التاريخ']
-                clients_disp = clients_df.drop(columns=['id'])
-                clients_disp.columns = display_cols
-                st.dataframe(clients_disp, use_container_width=True, hide_index=True)
+            i_amount = c1.number_input("قيمة القسط المستحق", min_value=0.0)
+            i_date = c2.date_input("تاريخ الاستحقاق")
+            i_status = c1.selectbox("حالة الدفع", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"])
+            
+            if st.form_submit_button("تسجيل القسط", type="primary"):
+                u_code = str(i_unit).split(" - ")[0] if " - " in str(i_unit) else str(i_unit)
+                u_client = str(i_unit).split(" - ")[1] if " - " in str(i_unit) else ""
+                db_execute("INSERT INTO UnitInstallments (unit_code, client_name, amount, due_date, status) VALUES (%s, %s, %s, %s, %s)", 
+                           (u_code, u_client, i_amount, i_date.strftime("%Y/%m/%d"), i_status))
+                st.success("تم تسجيل القسط بنجاح وتحديد موعده!")
                 
-                st.markdown("### 🔄 تحديث حالة عميل")
-                with st.form("update_client"):
-                    c1, c2 = st.columns(2)
-                    selected_client_id = c2.selectbox("اختر العميل", clients_df['id'].astype(str) + " - " + clients_df['client_name'])
-                    new_status = c1.selectbox("الحالة الجديدة", ["مهتم", "مؤجل", "تم التعاقد", "غير مهتم"])
-                    new_notes = st.text_input("إضافة ملاحظات جديدة")
-                    if st.form_submit_button("تحديث"):
-                        cid = selected_client_id.split(" - ")[0]
-                        db_execute("UPDATE Clients SET status=%s, follow_up_notes = follow_up_notes || ' | ' || %s WHERE id=%s", (new_status, new_notes, cid))
-                        st.success("تم تحديث بيانات العميل بنجاح!"); st.rerun()
-            else:
-                st.info("لا يوجد عملاء مسجلين حتى الآن.")
-        except Exception as e: pass
+        st.divider()
+        st.subheader("جدول استحقاق الأقساط")
+        try:
+            inst_df = pd.read_sql_query("SELECT unit_code, client_name, amount, due_date, status FROM UnitInstallments ORDER BY due_date ASC", conn)
+            if not inst_df.empty:
+                inst_df.columns = ['رقم الوحدة', 'العميل', 'المبلغ', 'تاريخ الاستحقاق', 'الحالة']
+                st.dataframe(inst_df, use_container_width=True, hide_index=True)
+            else: st.info("لا توجد أقساط مسجلة.")
+        except: pass
         conn.close()
     elif nav == "👤 لوحتي الشخصية":
         render_employee_dashboard(emp_id, balance)
@@ -1209,7 +1225,7 @@ def render_employee_dashboard(emp_id, balance):
                             
                             st.markdown("---")
                             st.markdown("### 📝 إضافة تقرير حر أو تسجيل انصراف")
-                            selected_proj = st.selectbox("المشروع (الاتحاد) / المبيعات", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى (مبيعات ومتابعة عملاء)"])
+                            selected_proj = st.selectbox("المشروع (الاتحاد) / مهامك", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى"])
                             
                             if is_exempt:
                                 st.info("💡 حسابك مُعفى من إجبارية تقديم التقرير اليومي، يمكنك تسجيل الانصراف مباشرة.")
