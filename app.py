@@ -443,8 +443,8 @@ def render_company_dashboard():
 # ==========================================
 def render_attendance_report(department_filter=None):
     conn = get_db_connection()
-    if department_filter: emps = db_fetchall("SELECT name FROM Employees WHERE department=%s", (department_filter,))
-    else: emps = db_fetchall("SELECT name FROM Employees")
+    if department_filter: emps = db_fetchall("SELECT name FROM Employees WHERE department=%s ORDER BY name", (department_filter,))
+    else: emps = db_fetchall("SELECT name FROM Employees ORDER BY name")
         
     emp_list = ["الكل"] + [e[0] for e in emps]
     months = db_fetchall("SELECT DISTINCT substring(date from 1 for 7) FROM WebAttendance")
@@ -502,8 +502,8 @@ def render_task_delegation(department):
     st.header("📋 إسناد مهام للموظفين (Task Delegation)")
     st.info("💡 المهام التي يتم إسنادها هنا ستظهر مباشرة للموظف في لوحته الشخصية ليقوم بتنفيذها وتقديم التقرير عليها.")
     conn = get_db_connection()
-    if department == "الكل": emps = pd.read_sql_query("SELECT emp_id, name FROM Employees", conn)
-    else: emps = pd.read_sql_query("SELECT emp_id, name FROM Employees WHERE department=%s", conn, params=(department,))
+    if department == "الكل": emps = pd.read_sql_query("SELECT emp_id, name FROM Employees ORDER BY name", conn)
+    else: emps = pd.read_sql_query("SELECT emp_id, name FROM Employees WHERE department=%s ORDER BY name", conn, params=(department,))
     conn.close()
     
     with st.form("assign_task_form"):
@@ -636,7 +636,8 @@ def admin_portal():
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
         conn = get_db_connection()
-        users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, e.phone, e.exempt_report, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id", conn)
+        # هنا تم إضافة ORDER BY لتجنب مشكلة اللاج وتغيير الحسابات العشوائي
+        users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, e.phone, e.exempt_report, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id ORDER BY u.username ASC", conn)
         conn.close()
         
         if not users_df.empty:
@@ -648,7 +649,8 @@ def admin_portal():
             
             st.divider()
             st.subheader("تعديل بيانات حساب موجود")
-            selected_user = st.selectbox("📌 اختر الحساب المطلوب تعديله:", users_df['username'].tolist())
+            # إضافة key لتثبيت الاختيار في الذاكرة
+            selected_user = st.selectbox("📌 اختر الحساب المطلوب تعديله:", users_df['username'].tolist(), key="select_edit_user")
             curr_data = users_df[users_df['username'] == selected_user].iloc[0]
             curr_emp_id = curr_data['emp_id']
             curr_name = curr_data['name'] if pd.notna(curr_data['name']) else ""
@@ -687,7 +689,7 @@ def admin_portal():
             st.subheader("🗑️ حذف حساب نهائياً")
             st.warning("⚠️ سيتم مسح بيانات الدخول لمنع الموظف من الدخول مجدداً (مع الاحتفاظ بتاريخ بصماته).")
             with st.form("delete_user_form"):
-                user_to_delete = st.selectbox("اختر اسم المستخدم المراد حذفه:", users_df['username'].tolist())
+                user_to_delete = st.selectbox("اختر اسم المستخدم المراد حذفه:", users_df['username'].tolist(), key="select_del_user")
                 if st.form_submit_button("إيقاف وحذف الحساب 🗑️", type="primary"):
                     if user_to_delete.lower() in ['admin', 'owner']:
                         st.error("❌ حماية النظام: لا يمكن حذف الحسابات الإدارية الأساسية (Admin / Owner)!")
@@ -721,7 +723,7 @@ def admin_portal():
                 st.success("تم حفظ الموقع بنجاح!"); st.rerun()
                 
         conn = get_db_connection()
-        locations_df = pd.read_sql_query("SELECT id, name, lat, lon, radius FROM Locations", conn)
+        locations_df = pd.read_sql_query("SELECT id, name, lat, lon, radius FROM Locations ORDER BY name", conn)
         conn.close()
         if not locations_df.empty:
             locations_df.columns = ['id', 'اسم الموقع', 'خط العرض', 'خط الطول', 'النطاق']
@@ -856,7 +858,6 @@ def owner_portal():
     render_smart_alerts()
     
     st.title("👑 لوحة تحكم المالك")
-    # فصلنا المستخلصات في تبويب مستقل للمتابعة الدقيقة
     nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "📈 الموقف المالي والهندسي", "📄 تتبع المستخلصات", "🏢 مبيعات ووحدات"], horizontal=True)
     st.divider()
 
@@ -873,7 +874,6 @@ def owner_portal():
         conn.close()
         
     elif nav == "📈 الموقف المالي والهندسي":
-        # الشاشة رجعت لطبيعتها القديمة (أقساط، تراخيص، رسومات)
         conn = get_db_connection()
         project_list = [f"اتحاد {i}" for i in range(1, 46)]
         selected_project = st.selectbox("اختر المشروع:", project_list)
@@ -928,7 +928,6 @@ def owner_portal():
                     with st.expander(f"مستخلص: {row['extract_name']} | القيمة: {row['amount']} | الحالة: {row['status']}"):
                         st.write(f"**تاريخ الإنشاء:** {row['date']} | **بواسطة:** {row['created_by']}")
                         
-                        # مؤشر العطلة والتتبع
                         st.success(f"📍 **المستخلص الآن في عهدة:** {blocker}")
                         
                         if pd.notna(row['impediment_notes']) and row['impediment_notes'].strip() != "":
@@ -1224,7 +1223,7 @@ def render_employee_dashboard(emp_id, balance):
     sub_nav = st.radio("العمليات المتاحة:", ["📍 بصمة وتقارير وإنجاز مهام", "📝 تقديم طلب جديد", "🌴 سجلاتي"], horizontal=True)
     
     if sub_nav == "📍 بصمة وتقارير وإنجاز مهام":
-        locations = db_fetchall("SELECT name, lat, lon, radius FROM Locations")
+        locations = db_fetchall("SELECT name, lat, lon, radius FROM Locations ORDER BY name")
         if not locations: st.error("لم يتم تسجيل فروع أو مواقع للشركة بعد.")
         elif not GEO_AVAILABLE: st.error("مكتبة Location غير مثبتة.")
         else:
@@ -1273,7 +1272,7 @@ def render_employee_dashboard(emp_id, balance):
                             
                             st.markdown("---")
                             st.markdown("### 📝 إضافة تقرير حر أو تسجيل انصراف")
-                            selected_proj = st.selectbox("المشروع (الاتحاد) / مهامك", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى"])
+                            selected_proj = st.selectbox("المشروع (الاتحاد) / المبيعات", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى (مبيعات ومتابعة عملاء)"])
                             
                             if is_exempt:
                                 st.info("💡 حسابك مُعفى من إجبارية تقديم التقرير اليومي، يمكنك تسجيل الانصراف مباشرة.")
