@@ -13,7 +13,7 @@ import tempfile
 import math
 
 # ==========================================
-# 1. إعدادات الصفحة وتهيئة الجلسة (حل مشكلة KeyError)
+# 1. إعدادات الصفحة وتهيئة الجلسة
 # ==========================================
 st.set_page_config(page_title="كيان الشرقية للاستثمار العقاري", page_icon="🏗️", layout="wide")
 
@@ -196,40 +196,20 @@ ROLE_OPTIONS = [
 ]
 
 ROLE_MAP = {
-    "لا يوجد (None)": "none",
-    "موظف عادي (Employee)": "employee",
-    "رئيس قسم / مدير (Manager)": "manager",
-    "مدير إداري (Admin Manager)": "admin_manager",
-    "موارد بشرية (HR)": "hr",
-    "مبيعات (Sales)": "sales",
-    "مسؤول عقود قانونية (Legal)": "legal",
-    "مهندس (Engineer)": "engineer",
-    "مهندس إدارة وتخطيط (Planning Engineer)": "planning_engineer",
-    "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer",
-    "محاسب (Accountant)": "accountant",
-    "مسؤول تراخيص (Licensing)": "licensing",
-    "مهندس IT (IT)": "it",
-    "مسؤول نظام (Admin)": "admin",
-    "مالك (Owner)": "owner"
+    "لا يوجد (None)": "none", "موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", 
+    "مدير إداري (Admin Manager)": "admin_manager", "موارد بشرية (HR)": "hr", "مبيعات (Sales)": "sales", 
+    "مسؤول عقود قانونية (Legal)": "legal", "مهندس (Engineer)": "engineer", "مهندس إدارة وتخطيط (Planning Engineer)": "planning_engineer",
+    "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer", "محاسب (Accountant)": "accountant", "مسؤول تراخيص (Licensing)": "licensing", 
+    "مهندس IT (IT)": "it", "مسؤول نظام (Admin)": "admin", "مالك (Owner)": "owner"
 }
 
 ROLE_REVERSE_MAP = {v: k for k, v in ROLE_MAP.items()}
 DISPLAY_MAP = {
-    "none": "لا يوجد",
-    "employee": "موظف عادي",
-    "manager": "رئيس قسم",
-    "admin_manager": "مدير إداري",
-    "hr": "موارد بشرية",
-    "sales": "مبيعات",
-    "legal": "عقود قانونية",
-    "engineer": "مهندس",
-    "planning_engineer": "مهندس إدارة وتخطيط",
-    "extracts_engineer": "مهندس مستخلصات",
-    "accountant": "محاسب",
-    "licensing": "مسؤول تراخيص",
-    "it": "مهندس IT",
-    "admin": "مسؤول نظام",
-    "owner": "المالك"
+    "none": "لا يوجد", "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
+    "hr": "موارد بشرية", "sales": "مبيعات", "legal": "عقود قانونية", "engineer": "مهندس", 
+    "planning_engineer": "مهندس إدارة وتخطيط", "extracts_engineer": "مهندس مستخلصات", 
+    "accountant": "محاسب", "licensing": "مسؤول تراخيص", "it": "مهندس IT", 
+    "admin": "مسؤول نظام", "owner": "المالك"
 }
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -1263,7 +1243,8 @@ def hr_portal():
     balance = emp_info[2]
     
     render_sidebar("موارد بشرية (HR)")
-    nav = st.radio("القائمة:", ["📝 تقارير الحضور والانصراف للشركة", "👤 لوحتي الشخصية"], horizontal=True)
+    # جعل "لوحتي الشخصية" هي الأولى
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📝 تقارير الحضور والانصراف للشركة"], horizontal=True)
     st.divider()
     
     if nav == "📝 تقارير الحضور والانصراف للشركة":
@@ -1279,7 +1260,8 @@ def admin_manager_portal():
     render_sidebar("المدير الإداري")
     render_smart_alerts()
     
-    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "✅ طلبات الموظفين", "📋 إسناد مهام", "📄 إدارة المستخلصات", "📝 تقارير الحضور", "👤 لوحتي الشخصية"], horizontal=True)
+    # جعل "لوحتي الشخصية" هي الأولى
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📊 لوحة القيادة", "✅ طلبات الموظفين", "📋 إسناد مهام", "📄 إدارة المستخلصات", "📝 تقارير الحضور"], horizontal=True)
     st.divider()
     
     if nav == "📊 لوحة القيادة":
@@ -1334,12 +1316,13 @@ def manager_portal():
         balance = 21
         
     render_sidebar("رئيس قسم")
-    nav_options = ["✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم", "👤 لوحتي الشخصية"]
+    # جعل "لوحتي الشخصية" هي الأولى
+    nav_options = ["👤 لوحتي الشخصية", "✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم"]
     
     if "مهندسين إدارة وتخطيط" in [emp_dept, sec_dept]:
-        nav_options.insert(3, "📄 مراجعة المستخلصات")
+        nav_options.append("📄 مراجعة المستخلصات")
     if "مبيعات وخدمة عملاء" in [emp_dept, sec_dept]:
-        nav_options.insert(3, "👥 إدارة العملاء (CRM)")
+        nav_options.append("👥 إدارة العملاء (CRM)")
 
     nav = st.radio("القائمة:", nav_options, horizontal=True)
     st.divider()
@@ -1380,7 +1363,7 @@ def accountant_portal():
     balance = emp_info[2]
     
     render_sidebar("المحاسب")
-    nav = st.radio("القائمة:", ["💰 إدارة الأقساط", "📄 إدارة المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "💰 إدارة الأقساط", "📄 إدارة المستخلصات"], horizontal=True)
     
     if nav == "💰 إدارة الأقساط":
         with st.form("add_fin"):
@@ -1412,7 +1395,7 @@ def licensing_portal():
     balance = emp_info[2]
     
     render_sidebar("مسؤول التراخيص")
-    nav = st.radio("القائمة:", ["📜 التراخيص (خزنة المستندات)", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📜 التراخيص (خزنة المستندات)"], horizontal=True)
     
     if nav == "📜 التراخيص (خزنة المستندات)":
         with st.form("add_lic"):
@@ -1443,7 +1426,7 @@ def engineer_portal():
     balance = emp_info[2]
     
     render_sidebar("المهندس")
-    nav = st.radio("القائمة:", ["📐 الرسومات (خزنة الملفات)", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📐 الرسومات (خزنة الملفات)"], horizontal=True)
     
     if nav == "📐 الرسومات (خزنة الملفات)":
         with st.form("add_draw"):
@@ -1475,7 +1458,7 @@ def extracts_engineer_portal():
     balance = emp_info[2]
     
     render_sidebar("مهندس المستخلصات")
-    nav = st.radio("القائمة:", ["📄 إنشاء وتجهيز مستخلص", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📄 إنشاء وتجهيز مستخلص"], horizontal=True)
     
     if nav == "📄 إنشاء وتجهيز مستخلص":
         st.header("إضافة مستخلص جديد وتجهيزه")
@@ -1533,7 +1516,7 @@ def planning_engineer_portal():
     balance = emp_info[2]
     
     render_sidebar("مهندس إدارة وتخطيط")
-    nav = st.radio("القائمة:", ["📄 مراجعة واعتماد المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📄 مراجعة واعتماد المستخلصات"], horizontal=True)
     
     if nav == "📄 مراجعة واعتماد المستخلصات":
         render_manage_extracts()
@@ -1546,11 +1529,12 @@ def legal_portal():
     balance = emp_info[2]
     
     render_sidebar("مسؤول الشؤون القانونية والعقود")
-    nav = st.radio("القائمة:", ["📄 أرشفة العقود الموقعة", "💳 إدارة الشيكات البنكية", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📄 أرشفة العقود الموقعة", "💳 إدارة الشيكات البنكية"], horizontal=True)
     st.divider()
     
     if nav == "📄 أرشفة العقود الموقعة":
         st.header("إرفاق وحفظ العقود الأصلية (Scanned)")
+        st.info("اختر الوحدة المباعة من قسم المبيعات لترفع نسختها الموقعة في أرشيف الشركة.")
         conn = get_db_connection()
         units = pd.read_sql_query("SELECT unit_code, client_name, project_name FROM RealEstateUnits WHERE status IN ('مباعة', 'محجوزة')", conn)
         
@@ -1651,7 +1635,7 @@ def sales_portal():
     balance = emp_info[2]
     
     render_sidebar("المبيعات وخدمة العملاء")
-    nav = st.radio("القائمة:", ["🏢 إدارة الوحدات والمبيعات", "💸 أقساط العملاء", "👤 لوحتي الشخصية"], horizontal=True)
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "🏢 إدارة الوحدات والمبيعات", "💸 أقساط العملاء"], horizontal=True)
     st.divider()
     
     if nav == "🏢 إدارة الوحدات والمبيعات":
