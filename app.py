@@ -162,7 +162,7 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
-# دالة مولد تقارير الطباعة الرسمية (HTML to PDF)
+# دالة مولد تقارير الطباعة الرسمية (HTML to PDF) - معدلة للصف التجميعي
 # ==========================================
 def get_base64_image(image_path):
     try:
@@ -172,7 +172,11 @@ def get_base64_image(image_path):
 def generate_html_report(title, df):
     logo_b64 = get_base64_image(LOGO_FILE)
     logo_img = f'<img src="data:image/png;base64,{logo_b64}" alt="Logo" style="max-height: 80px;">' if logo_b64 else '<h2 style="color:#D4AF37;">كيان الشرقية</h2>'
-    table_html = df.to_html(index=False, classes='report-table', border=0)
+    
+    # تحويل الـ DataFrame لجدول HTML وتحديد كلاس خاص لصف الإجمالي
+    html_table = df.to_html(index=False, classes='report-table', border=0)
+    # إضافة تنسيق لصف الإجمالي إذا كان موجوداً
+    html_table = html_table.replace("<tr>\n      <td>إجمالي الساعات</td>", "<tr class='total-row'>\n      <td>إجمالي الساعات</td>")
     
     html_content = f"""
     <!DOCTYPE html>
@@ -192,6 +196,8 @@ def generate_html_report(title, df):
             .report-table th, .report-table td {{ border: 1px solid #ddd; padding: 12px; }}
             .report-table th {{ background-color: #0b172a; color: #D4AF37; font-weight: 900; }}
             .report-table tr:nth-child(even) {{ background-color: #f8f9fa; }}
+            .total-row {{ background-color: #D4AF37 !important; color: #0b172a; font-weight: 900; }}
+            .total-row td {{ border-top: 2px solid #0b172a; }}
             .footer {{ margin-top: 50px; text-align: center; font-size: 13px; color: #666; border-top: 2px solid #eee; padding-top: 15px; }}
             .print-btn {{ display: block; width: 250px; margin: 0 auto 30px auto; padding: 12px; background: #D4AF37; color: #0b172a; text-align: center; text-decoration: none; border-radius: 8px; font-weight: bold; cursor: pointer; border: none; font-family: 'Tajawal', sans-serif; font-size: 16px; }}
             .print-btn:hover {{ background: #b8952b; }}
@@ -214,7 +220,7 @@ def generate_html_report(title, df):
             <h2>{title}</h2>
             <p>تاريخ الإصدار: {get_egypt_time().strftime('%Y/%m/%d %H:%M')}</p>
         </div>
-        {table_html}
+        {html_table}
         <div class="footer">
             <p>هذا التقرير مُصدر آلياً وموثق من نظام (ERP) الخاص بشركة كيان الشرقية © {get_egypt_time().strftime('%Y')}</p>
         </div>
@@ -541,8 +547,22 @@ def render_company_dashboard():
     conn.close()
 
 # ==========================================
-# دالة شيت تقارير البصمة
+# دالة شيت تقارير البصمة (المعدلة لحساب الساعات والتحذير)
 # ==========================================
+def calculate_hours_diff(check_in, check_out):
+    if pd.isna(check_in) or pd.isna(check_out) or not check_in or not check_out:
+        return "⚠️ ناقصة بصمة"
+    try:
+        in_time = datetime.strptime(str(check_in).strip(), "%H:%M")
+        out_time = datetime.strptime(str(check_out).strip(), "%H:%M")
+        diff_mins = (out_time - in_time).total_seconds() / 60
+        if diff_mins < 0: diff_mins += 24 * 60  # لحساب الورديات اللي بتعدي منتصف الليل
+        hours = int(diff_mins // 60)
+        mins = int(diff_mins % 60)
+        return f"{hours}:{mins:02d}"
+    except:
+        return "خطأ في الوقت"
+
 def render_attendance_report(department_filter=None):
     conn = get_db_connection()
     if department_filter: emps = db_fetchall("SELECT name FROM Employees WHERE department=%s OR secondary_department=%s ORDER BY name", (department_filter, department_filter))
@@ -586,21 +606,42 @@ def render_attendance_report(department_filter=None):
         arabic_days = {'Monday': 'الإثنين', 'Tuesday': 'الثلاثاء', 'Wednesday': 'الأربعاء', 'Thursday': 'الخميس', 'Friday': 'الجمعة', 'Saturday': 'السبت', 'Sunday': 'الأحد'}
         rep_df['اسم اليوم'] = rep_df['date_val'].dt.day_name().map(arabic_days)
         rep_df['التاريخ'] = rep_df['date_val'].dt.strftime('%Y/%m/%d')
-        final_df = rep_df[['التاريخ', 'اسم اليوم', 'emp_name', 'dept', 'check_in', 'check_out', 'loc', 'proj', 'rep', 'photo']]
-        final_df.columns = ['التاريخ', 'اليوم', 'اسم الموظف', 'القسم الأساسي', 'الحضور', 'الانصراف', 'موقع البصمة', 'المشاريع', 'التقارير اليومية', 'صورة الإثبات']
+        
+        # حساب ساعات العمل لكل صف (يوم)
+        rep_df['ساعات العمل'] = rep_df.apply(lambda row: calculate_hours_diff(row['check_in'], row['check_out']), axis=1)
+        
+        final_df = rep_df[['التاريخ', 'اسم اليوم', 'emp_name', 'dept', 'check_in', 'check_out', 'ساعات العمل', 'loc', 'proj', 'rep', 'photo']]
+        final_df.columns = ['التاريخ', 'اليوم', 'اسم الموظف', 'القسم الأساسي', 'الحضور', 'الانصراف', 'ساعات العمل', 'موقع البصمة', 'المشاريع', 'التقارير اليومية', 'صورة الإثبات']
         
         st.success(f"✅ تم العثور على {len(final_df)} سجل دوام.")
         st.dataframe(final_df, use_container_width=True, hide_index=True, column_config={"صورة الإثبات": st.column_config.ImageColumn("صورة الإثبات")})
         
         csv_df = final_df.drop(columns=['صورة الإثبات'])
         
-        # أزرار التحميل
-        col_down1, col_down2 = st.columns(2)
+        # حساب إجمالي الساعات للتقرير (الصف الأخير)
+        total_mins = 0
+        for val in csv_df['ساعات العمل']:
+            if "⚠️" not in val and ":" in val:
+                try:
+                    h, m = val.split(":")
+                    total_mins += int(h) * 60 + int(m)
+                except: pass
         
-        csv = csv_df.to_csv(index=False).encode('utf-8-sig')
+        total_str = f"{total_mins // 60}:{(total_mins % 60):02d} ساعة"
+        
+        # إضافة صف التجميع
+        summary_row = pd.DataFrame([{
+            'التاريخ': 'إجمالي الساعات', 'اليوم': '', 'اسم الموظف': '', 'القسم الأساسي': '', 
+            'الحضور': '', 'الانصراف': '', 'ساعات العمل': total_str, 
+            'موقع البصمة': '', 'المشاريع': '', 'التقارير اليومية': ''
+        }])
+        csv_df_with_total = pd.concat([csv_df, summary_row], ignore_index=True)
+        
+        col_down1, col_down2 = st.columns(2)
+        csv = csv_df_with_total.to_csv(index=False).encode('utf-8-sig')
         col_down1.download_button("📥 تحميل كـ شيت (Excel/CSV)", data=csv, file_name=f"Attendance_Sheet_{get_egypt_time().strftime('%Y%m%d')}.csv", mime='text/csv', use_container_width=True)
         
-        html_report = generate_html_report("تقرير الحضور والانصراف المجمع - كيان الشرقية", csv_df)
+        html_report = generate_html_report("تقرير الحضور والانصراف التفصيلي - كيان الشرقية", csv_df_with_total)
         col_down2.download_button("🖨️ تحميل للطباعة (رسمي PDF)", data=html_report, file_name=f"Attendance_Report_{get_egypt_time().strftime('%Y%m%d')}.html", mime='text/html', type="primary", use_container_width=True)
         
     else: st.info("لا توجد سجلات تطابق خيارات البحث.")
@@ -987,7 +1028,7 @@ def legal_portal():
         render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# باقي البوابات
+# باقي البوابات (حسابات، تراخيص، مبيعات، مهندس، موظف)
 # ==========================================
 def accountant_portal():
     emp_id = st.session_state['emp_id']
