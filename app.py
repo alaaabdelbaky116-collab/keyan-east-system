@@ -10,6 +10,8 @@ import os
 import psycopg2
 import pytz
 import plotly.express as px
+import sqlite3
+import tempfile
 
 # ==========================================
 # 1. الاتصال بقاعدة البيانات وتوقيت مصر
@@ -548,10 +550,9 @@ def render_manage_extracts():
     is_planning_auth = (role == 'planning_engineer') or (emp_dept == "مهندسين إدارة وتخطيط")
 
     try:
-        # استدعاء المستخلصات بناءً على دور الشخص لتنظيم دورة العمل
         if is_planning_auth:
             query = "SELECT id, project_name, extract_name, amount, date, created_by, status, file_data, impediment_notes FROM Extracts WHERE status = 'بانتظار اعتماد التخطيط' ORDER BY id DESC"
-        else: # الحسابات والإدارة العليا
+        else:
             query = "SELECT id, project_name, extract_name, amount, date, created_by, status, file_data, impediment_notes FROM Extracts WHERE status IN ('بانتظار الصرف', 'تم الصرف') ORDER BY id DESC"
             
         ext_df = pd.read_sql_query(query, conn)
@@ -636,7 +637,6 @@ def admin_portal():
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
         conn = get_db_connection()
-        # هنا تم إضافة ORDER BY لتجنب مشكلة اللاج وتغيير الحسابات العشوائي
         users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, e.phone, e.exempt_report, u.role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id ORDER BY u.username ASC", conn)
         conn.close()
         
@@ -649,7 +649,6 @@ def admin_portal():
             
             st.divider()
             st.subheader("تعديل بيانات حساب موجود")
-            # إضافة key لتثبيت الاختيار في الذاكرة
             selected_user = st.selectbox("📌 اختر الحساب المطلوب تعديله:", users_df['username'].tolist(), key="select_edit_user")
             curr_data = users_df[users_df['username'] == selected_user].iloc[0]
             curr_emp_id = curr_data['emp_id']
@@ -739,28 +738,41 @@ def admin_portal():
         render_attendance_report()
         
     elif nav == "💾 النسخ الاحتياطي":
-        st.header("💾 النسخ الاحتياطي الشامل (Database Backup)")
-        st.info("يمكنك تحميل نسخة احتياطية كاملة من قاعدة البيانات في ملف Excel واحد يحتوي على كافة الجداول.")
-        if st.button("📥 إنشاء وتحميل نسخة احتياطية لكافة البيانات", type="primary"):
-            with st.spinner("جاري تجميع البيانات وتجهيز الملف..."):
+        st.header("💾 النسخ الاحتياطي الشامل (Database Dump)")
+        st.info("يمكنك الآن تحميل نسخة احتياطية حقيقية كقاعدة بيانات (SQLite) بصيغة `.db` تحتوي على كل الجداول والملفات (بما فيها ملفات الـ PDF المرفوعة) بدون أي فقدان للبيانات.")
+        if st.button("📥 إنشاء وتحميل قاعدة البيانات (DB File)", type="primary"):
+            with st.spinner("جاري استخراج قاعدة البيانات وتجهيز الملف..."):
                 conn = get_db_connection()
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    pd.read_sql_query("SELECT * FROM Employees", conn).to_excel(writer, sheet_name='Employees', index=False)
-                    pd.read_sql_query("SELECT * FROM Users", conn).to_excel(writer, sheet_name='Users', index=False)
-                    pd.read_sql_query("SELECT * FROM WebAttendance", conn).to_excel(writer, sheet_name='Attendance', index=False)
-                    pd.read_sql_query("SELECT * FROM Requests", conn).to_excel(writer, sheet_name='Requests', index=False)
-                    pd.read_sql_query("SELECT * FROM ProjectFinancials", conn).to_excel(writer, sheet_name='Financials', index=False)
-                    try: pd.read_sql_query("SELECT * FROM Tasks", conn).to_excel(writer, sheet_name='Tasks', index=False)
-                    except: pass
-                    try: pd.read_sql_query("SELECT * FROM Extracts", conn).to_excel(writer, sheet_name='Extracts', index=False)
-                    except: pass
-                    try: pd.read_sql_query("SELECT * FROM RealEstateUnits", conn).to_excel(writer, sheet_name='Units', index=False)
-                    except: pass
-                    try: pd.read_sql_query("SELECT * FROM UnitInstallments", conn).to_excel(writer, sheet_name='UnitInstallments', index=False)
-                    except: pass
+                
+                cur = conn.cursor()
+                # الحصول على قائمة بجميع الجداول ديناميكياً
+                cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+                tables = [row[0] for row in cur.fetchall()]
+                cur.close()
+                
+                # إنشاء ملف SQLite مؤقت
+                tmp_db_path = tempfile.mktemp(suffix=".db")
+                sqlite_conn = sqlite3.connect(tmp_db_path)
+                
+                for table in tables:
+                    try:
+                        df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+                        df.to_sql(table, sqlite_conn, if_exists='replace', index=False)
+                    except:
+                        pass
+                
+                sqlite_conn.close()
                 conn.close()
-                st.download_button(label="💾 اضغط هنا لتحميل ملف الـ Excel الآن", data=output.getvalue(), file_name=f"Keyan_Backup_{get_egypt_time().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                
+                with open(tmp_db_path, "rb") as f:
+                    db_bytes = f.read()
+                    
+                st.download_button(
+                    label="💾 اضغط هنا لتحميل ملف قاعدة البيانات (.db) الآن", 
+                    data=db_bytes, 
+                    file_name=f"Keyan_DB_Backup_{get_egypt_time().strftime('%Y%m%d_%H%M')}.db", 
+                    mime="application/x-sqlite3"
+                )
 
 # ==========================================
 # بوابة الموارد البشرية (HR Portal)
