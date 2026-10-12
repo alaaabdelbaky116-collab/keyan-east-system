@@ -112,22 +112,23 @@ DEFAULT_ANNUAL_BALANCE = 21
 LOGO_FILE = "image_c5a585.png"
 
 COMPANY_DEPARTMENTS = [
-    "اتش ار (HR)", "خدمة عملاء", "تراخيص", "حسابات", "عقود قانونية", 
+    "اتش ار (HR)", "مبيعات وخدمة عملاء", "تراخيص", "حسابات", "عقود قانونية", 
     "مهندسين مكتب فني", "مهندسين إدارة وتخطيط", "مهندسين تنفيذ", 
     "إدارة المستخلصات", "إدارة الـ IT", "إدارة عليا", "أخرى"
 ]
 
 ROLE_OPTIONS = [
     "موظف عادي (Employee)", "رئيس قسم / مدير (Manager)", "مدير إداري (Admin Manager)", 
-    "موارد بشرية (HR)", "مبيعات (Sales)", "مهندس (Engineer)", "مهندس إدارة وتخطيط (Planning Engineer)",
-    "مهندس مستخلصات (Extracts Engineer)", "محاسب (Accountant)", 
-    "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", "مسؤول نظام (Admin)", "مالك (Owner)"
+    "موارد بشرية (HR)", "مبيعات وخدمة عملاء (Sales)", "مهندس (Engineer)", 
+    "مهندس إدارة وتخطيط (Planning Engineer)", "مهندس مستخلصات (Extracts Engineer)", 
+    "محاسب (Accountant)", "مسؤول تراخيص (Licensing)", "مهندس IT (IT)", 
+    "مسؤول نظام (Admin)", "مالك (Owner)"
 ]
 
 ROLE_MAP = {
     "موظف عادي (Employee)": "employee", "رئيس قسم / مدير (Manager)": "manager", 
     "مدير إداري (Admin Manager)": "admin_manager", "موارد بشرية (HR)": "hr", 
-    "مبيعات (Sales)": "sales", "مهندس (Engineer)": "engineer", 
+    "مبيعات وخدمة عملاء (Sales)": "sales", "مهندس (Engineer)": "engineer", 
     "مهندس إدارة وتخطيط (Planning Engineer)": "planning_engineer",
     "مهندس مستخلصات (Extracts Engineer)": "extracts_engineer", "محاسب (Accountant)": "accountant", 
     "مسؤول تراخيص (Licensing)": "licensing", "مهندس IT (IT)": "it", 
@@ -137,9 +138,10 @@ ROLE_MAP = {
 ROLE_REVERSE_MAP = {v: k for k, v in ROLE_MAP.items()}
 DISPLAY_MAP = {
     "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
-    "hr": "موارد بشرية", "sales": "مبيعات", "engineer": "مهندس", "planning_engineer": "مهندس إدارة وتخطيط",
-    "extracts_engineer": "مهندس مستخلصات", "accountant": "محاسب", 
-    "licensing": "مسؤول تراخيص", "it": "مهندس IT", "admin": "مسؤول نظام", "owner": "المالك"
+    "hr": "موارد بشرية", "sales": "مبيعات وخدمة عملاء", "engineer": "مهندس", 
+    "planning_engineer": "مهندس إدارة وتخطيط", "extracts_engineer": "مهندس مستخلصات", 
+    "accountant": "محاسب", "licensing": "مسؤول تراخيص", "it": "مهندس IT", 
+    "admin": "مسؤول نظام", "owner": "المالك"
 }
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -225,7 +227,7 @@ def render_sidebar(role_title):
             st.rerun()
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL (مع إعفاء التقرير)
+# 3. حماية وتجهيز جداول PostgreSQL
 # ==========================================
 def init_db():
     try:
@@ -245,6 +247,7 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, client_name TEXT, client_phone TEXT, project_interest TEXT, status TEXT, follow_up_notes TEXT, created_by TEXT, date TEXT)''')
         
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
         except: pass
@@ -598,8 +601,8 @@ def admin_portal():
             new_dept = c1.selectbox("القسم / الإدارة", COMPANY_DEPARTMENTS)
             role_choice = c2.selectbox("صلاحيات الحساب", ROLE_OPTIONS)
             new_user = c1.text_input("اسم المستخدم للدخول")
-            new_pwd = c1.text_input("كلمة المرور", type="password")
-            new_phone = c2.text_input("رقم الهاتف")
+            new_pwd = c2.text_input("كلمة المرور")
+            new_phone = c1.text_input("رقم الهاتف")
             new_exempt = st.checkbox("✔️ إعفاء الموظف من إجبارية كتابة التقرير اليومي")
             
             if st.form_submit_button("إنشاء الحساب", type="primary"):
@@ -642,7 +645,7 @@ def admin_portal():
                 new_name = c2.text_input("تعديل اسم الموظف", value=curr_name)
                 new_dept = c1.selectbox("تعديل القسم", COMPANY_DEPARTMENTS, index=COMPANY_DEPARTMENTS.index(curr_dept) if curr_dept in COMPANY_DEPARTMENTS else 0)
                 new_username = c2.text_input("اسم المستخدم الجديد")
-                new_pwd = c1.text_input("كلمة المرور الجديدة", type="password")
+                new_pwd = c1.text_input("كلمة المرور الجديدة")
                 new_role_choice = c2.selectbox("الصلاحية الجديدة", ROLE_OPTIONS, index=role_index)
                 edit_phone = c1.text_input("تعديل رقم الهاتف", value=curr_phone)
                 edit_exempt = st.checkbox("✔️ إعفاء الموظف من إجبارية تقديم التقرير اليومي", value=bool(curr_exempt))
@@ -730,6 +733,8 @@ def admin_portal():
                     except: pass
                     try: pd.read_sql_query("SELECT * FROM Extracts", conn).to_excel(writer, sheet_name='Extracts', index=False)
                     except: pass
+                    try: pd.read_sql_query("SELECT * FROM Clients", conn).to_excel(writer, sheet_name='Clients', index=False)
+                    except: pass
                 conn.close()
                 st.download_button(label="💾 اضغط هنا لتحميل ملف الـ Excel الآن", data=output.getvalue(), file_name=f"Keyan_Backup_{get_egypt_time().strftime('%Y%m%d')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
@@ -793,7 +798,10 @@ def manager_portal():
     render_sidebar(f"رئيس قسم: {emp_dept}")
 
     nav_options = ["✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم", "👤 لوحتي الشخصية"]
-    if emp_dept == "مهندسين إدارة وتخطيط": nav_options.insert(3, "📄 مراجعة المستخلصات")
+    if emp_dept == "مهندسين إدارة وتخطيط":
+        nav_options.insert(3, "📄 مراجعة المستخلصات")
+    elif emp_dept == "مبيعات وخدمة عملاء":
+        nav_options.insert(3, "👥 إدارة العملاء (CRM)")
 
     nav = st.radio("القائمة:", nav_options, horizontal=True)
     st.divider()
@@ -815,6 +823,7 @@ def manager_portal():
     elif nav == "📋 إسناد مهام للقسم": render_task_delegation(emp_dept)
     elif nav == "📝 تقارير دوام القسم": render_attendance_report(department_filter=emp_dept)
     elif nav == "📄 مراجعة المستخلصات": render_manage_extracts()
+    elif nav == "👥 إدارة العملاء (CRM)": sales_portal()
     elif nav == "👤 لوحتي الشخصية": render_employee_dashboard(emp_id, balance)
 
 # ==========================================
@@ -825,7 +834,7 @@ def owner_portal():
     render_smart_alerts()
     
     st.title("👑 لوحة تحكم المالك")
-    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "📈 الموقف المالي والهندسي"], horizontal=True)
+    nav = st.radio("القائمة:", ["📊 لوحة القيادة", "📑 تقارير المهام", "📈 الموقف المالي والهندسي", "👥 تقارير المبيعات"], horizontal=True)
     st.divider()
 
     if nav == "📊 لوحة القيادة": render_company_dashboard()
@@ -895,6 +904,25 @@ def owner_portal():
                         except: pass
                     else: st.warning("لم يتم إرفاق ملف للوحة.")
         else: st.info("لا يوجد رسومات")
+        conn.close()
+
+    elif nav == "👥 تقارير المبيعات":
+        st.header("إحصائيات المبيعات وخدمة العملاء")
+        conn = get_db_connection()
+        try:
+            clients_df = pd.read_sql_query("SELECT client_name, client_phone, project_interest, status, created_by, date FROM Clients ORDER BY id DESC", conn)
+            if not clients_df.empty:
+                clients_df.columns = ['الاسم', 'الموبايل', 'المشروع المهتم به', 'الحالة', 'المسؤول', 'تاريخ الإضافة']
+                st.dataframe(clients_df, use_container_width=True, hide_index=True)
+                
+                st.markdown("### توزيع حالات العملاء")
+                fig = px.pie(clients_df, names="الحالة", hole=0.4, color_discrete_sequence=px.colors.sequential.YlOrBr)
+                fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_family="Tajawal", font_color="#fff")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("لا توجد بيانات مسجلة في قسم المبيعات.")
+        except:
+            st.warning("جاري تهيئة قاعدة بيانات المبيعات.")
         conn.close()
 
 def accountant_portal():
@@ -1027,11 +1055,65 @@ def planning_engineer_portal():
     if nav == "📄 مراجعة المستخلصات": render_manage_extracts()
     else: render_employee_dashboard(emp_id, balance)
 
+# بوابة المبيعات وخدمة العملاء
 def sales_portal():
     emp_id = st.session_state['emp_id']
-    _, _, balance = get_employee_info(emp_id)
-    render_sidebar("مبيعات")
-    render_employee_dashboard(emp_id, balance)
+    emp_name, emp_dept, balance = get_employee_info(emp_id)
+    render_sidebar("المبيعات وخدمة العملاء")
+    
+    nav = st.radio("القائمة:", ["👥 إدارة العملاء (CRM)", "👤 لوحتي الشخصية"], horizontal=True)
+    st.divider()
+    
+    if nav == "👥 إدارة العملاء (CRM)":
+        st.header("إضافة ومتابعة بيانات العملاء")
+        with st.form("add_client"):
+            c1, c2 = st.columns(2)
+            c_name = c2.text_input("اسم العميل")
+            c_phone = c1.text_input("رقم الهاتف")
+            c_proj = c2.selectbox("المشروع المهتم به", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى"])
+            c_status = c1.selectbox("حالة العميل", ["مهتم", "مؤجل", "تم التعاقد", "غير مهتم"])
+            c_notes = st.text_area("ملاحظات المتابعة")
+            
+            if st.form_submit_button("تسجيل بيانات العميل", type="primary"):
+                if c_name and c_phone:
+                    today_str = get_egypt_time().strftime("%Y/%m/%d")
+                    db_execute("INSERT INTO Clients (client_name, client_phone, project_interest, status, follow_up_notes, created_by, date) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
+                               (c_name, c_phone, c_proj, c_status, c_notes, emp_name, today_str))
+                    st.success("تم تسجيل بيانات العميل بنجاح!")
+                else:
+                    st.error("يرجى إدخال اسم العميل ورقم الهاتف على الأقل.")
+                    
+        st.divider()
+        st.subheader("قاعدة بيانات العملاء الخاصة بي")
+        conn = get_db_connection()
+        try:
+            if st.session_state['role'] in ['manager', 'admin_manager', 'owner']:
+                clients_df = pd.read_sql_query("SELECT id, client_name, client_phone, project_interest, status, follow_up_notes, created_by, date FROM Clients ORDER BY id DESC", conn)
+            else:
+                clients_df = pd.read_sql_query("SELECT id, client_name, client_phone, project_interest, status, follow_up_notes, date FROM Clients WHERE created_by=%s ORDER BY id DESC", conn, params=(emp_name,))
+                
+            if not clients_df.empty:
+                display_cols = ['الاسم', 'الموبايل', 'المشروع', 'الحالة', 'الملاحظات', 'بواسطة', 'التاريخ'] if 'created_by' in clients_df.columns else ['الاسم', 'الموبايل', 'المشروع', 'الحالة', 'الملاحظات', 'التاريخ']
+                clients_disp = clients_df.drop(columns=['id'])
+                clients_disp.columns = display_cols
+                st.dataframe(clients_disp, use_container_width=True, hide_index=True)
+                
+                st.markdown("### 🔄 تحديث حالة عميل")
+                with st.form("update_client"):
+                    c1, c2 = st.columns(2)
+                    selected_client_id = c2.selectbox("اختر العميل", clients_df['id'].astype(str) + " - " + clients_df['client_name'])
+                    new_status = c1.selectbox("الحالة الجديدة", ["مهتم", "مؤجل", "تم التعاقد", "غير مهتم"])
+                    new_notes = st.text_input("إضافة ملاحظات جديدة")
+                    if st.form_submit_button("تحديث"):
+                        cid = selected_client_id.split(" - ")[0]
+                        db_execute("UPDATE Clients SET status=%s, follow_up_notes = follow_up_notes || ' | ' || %s WHERE id=%s", (new_status, new_notes, cid))
+                        st.success("تم تحديث بيانات العميل بنجاح!"); st.rerun()
+            else:
+                st.info("لا يوجد عملاء مسجلين حتى الآن.")
+        except Exception as e: pass
+        conn.close()
+    elif nav == "👤 لوحتي الشخصية":
+        render_employee_dashboard(emp_id, balance)
 
 def employee_portal():
     emp_id = st.session_state['emp_id']
@@ -1127,7 +1209,7 @@ def render_employee_dashboard(emp_id, balance):
                             
                             st.markdown("---")
                             st.markdown("### 📝 إضافة تقرير حر أو تسجيل انصراف")
-                            selected_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)])
+                            selected_proj = st.selectbox("المشروع (الاتحاد) / المبيعات", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى (مبيعات ومتابعة عملاء)"])
                             
                             if is_exempt:
                                 st.info("💡 حسابك مُعفى من إجبارية تقديم التقرير اليومي، يمكنك تسجيل الانصراف مباشرة.")
