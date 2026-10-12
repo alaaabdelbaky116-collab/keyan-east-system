@@ -162,6 +162,48 @@ def format_hhmm(total_minutes):
     return f"{hours}:{mins:02d}"
 
 # ==========================================
+# دالة التنبيهات الذكية للإدارة (التي تم استرجاعها)
+# ==========================================
+def render_smart_alerts():
+    conn = get_db_connection()
+    today = get_egypt_time()
+    alerts = []
+
+    try:
+        lic_df = pd.read_sql_query("SELECT license_name, project_name, due_date FROM ProjectLicenses WHERE status != 'منتهية'", conn)
+        for _, row in lic_df.iterrows():
+            try:
+                d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
+                days_left = (d_date - today).days
+                if 0 <= days_left <= 15:
+                    alerts.append(f"⚠️ **تنبيه ترخيص:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) سينتهي خلال {days_left} أيام!")
+                elif days_left < 0:
+                    alerts.append(f"❌ **ترخيص منتهي:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) انتهى منذ {-days_left} أيام!")
+            except: pass
+    except: pass
+
+    try:
+        fin_df = pd.read_sql_query("SELECT installment_type, project_name, due_date FROM ProjectFinancials WHERE status IN ('مستحق (لم يُدفع)', 'متأخر')", conn)
+        for _, row in fin_df.iterrows():
+            try:
+                d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
+                days_left = (d_date - today).days
+                if 0 <= days_left <= 10:
+                    alerts.append(f"💸 **تنبيه مالي:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) يستحق الدفع خلال {days_left} أيام!")
+                elif days_left < 0:
+                    alerts.append(f"🚨 **قسط متأخر:** قسط '{row['installment_type']}' لمشروع ({row['project_name']}) متأخر الدفع منذ {-days_left} أيام!")
+            except: pass
+    except: pass
+
+    conn.close()
+
+    if alerts:
+        with st.expander("🔔 اضغط هنا لرؤية التنبيهات الذكية الهامة!", expanded=True):
+            for alert in alerts:
+                if '❌' in alert or '🚨' in alert: st.error(alert)
+                else: st.warning(alert)
+
+# ==========================================
 # دالة الشريط الجانبي (ومبدل الصلاحيات)
 # ==========================================
 def render_sidebar(role_title):
@@ -180,7 +222,6 @@ def render_sidebar(role_title):
             current_disp = DISPLAY_MAP.get(st.session_state['current_role'], st.session_state['current_role'])
             
             options = [role1_disp, role2_disp]
-            # التأكد من الترتيب
             if current_disp not in options: current_disp = options[0]
             
             selected_role_disp = st.selectbox("اختر الصلاحية للعمل بها الآن:", options, index=options.index(current_disp))
@@ -210,7 +251,7 @@ def render_sidebar(role_title):
             st.rerun()
 
 # ==========================================
-# 3. حماية وتجهيز جداول PostgreSQL (العقود، الشيكات، الصلاحية الثانية)
+# 3. حماية وتجهيز جداول PostgreSQL
 # ==========================================
 def init_db():
     try:
@@ -234,7 +275,6 @@ def init_db():
         cur.execute('''CREATE TABLE IF NOT EXISTS UnitInstallments (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, amount REAL, due_date TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Cheques (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, cheque_number TEXT, amount REAL, due_date TEXT, file_data TEXT, status TEXT)''')
         
-        # التحديثات التلقائية لهيكلة قواعد البيانات القديمة
         try: cur.execute("ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT")
         except: pass
         try: cur.execute("ALTER TABLE ProjectDrawings ADD COLUMN file_data TEXT")
@@ -878,7 +918,70 @@ def owner_portal():
         conn.close()
 
 # ==========================================
-# بوابة العقود والشؤون القانونية (Legal Portal) - الموديول الجديد
+# دالة تتبع المستخلص للمالك والمهندسين
+# ==========================================
+def get_extract_blocker(status):
+    if status == 'قيد التجهيز': return "مهندس المستخلصات (قيد التجهيز/يوجد معوقات)"
+    if status == 'بانتظار اعتماد التخطيط': return "إدارة التخطيط (للمراجعة والاعتماد)"
+    if status == 'بانتظار الصرف': return "إدارة الحسابات (جاهز للصرف)"
+    if status == 'تم الصرف': return "مكتمل وتم الصرف ✅"
+    if status == 'مرفوض فنياً': return "مرفوض - عاد لمهندس المستخلصات للتعديل"
+    if status == 'مطلوب تعديلات': return "عاد لمهندس المستخلصات للتعديل"
+    if status == 'مرفوض': return "مرفوض من الحسابات/الإدارة"
+    if status == 'مراجعة نهائية': return "عاد للمراجعة"
+    return status
+
+# ==========================================
+# دالة موحدة لإدارة المستخلصات (التخطيط والحسابات)
+# ==========================================
+def render_manage_extracts():
+    st.header("📄 إدارة ومراجعة المستخلصات الهندسية")
+    conn = get_db_connection()
+    
+    role = st.session_state.get('role', '')
+    emp_id = st.session_state.get('emp_id')
+    _, emp_dept, _ = get_employee_info(emp_id)
+    is_planning_auth = (role == 'planning_engineer') or (emp_dept == "مهندسين إدارة وتخطيط")
+
+    try:
+        if is_planning_auth:
+            query = "SELECT id, project_name, extract_name, amount, date, created_by, status, file_data, impediment_notes FROM Extracts WHERE status = 'بانتظار اعتماد التخطيط' ORDER BY id DESC"
+        else:
+            query = "SELECT id, project_name, extract_name, amount, date, created_by, status, file_data, impediment_notes FROM Extracts WHERE status IN ('بانتظار الصرف', 'تم الصرف') ORDER BY id DESC"
+            
+        ext_df = pd.read_sql_query(query, conn)
+        
+        if not ext_df.empty:
+            for _, row in ext_df.iterrows():
+                with st.expander(f"مستخلص: {row['extract_name']} | المشروع: {row['project_name']} | الحالة: {row['status']}"):
+                    st.write(f"**القيمة:** {row['amount']} | **بواسطة:** {row['created_by']} | **التاريخ:** {row['date']}")
+                    if pd.notna(row['impediment_notes']) and row['impediment_notes'].strip() != "":
+                        st.warning(f"**معوقات وملاحظات المهندس:** {row['impediment_notes']}")
+                        
+                    file_content = row['file_data']
+                    if file_content and isinstance(file_content, str) and len(file_content) > 10:
+                        try:
+                            decoded_bytes = base64.b64decode(file_content)
+                            st.download_button("📥 تحميل المستخلص للمراجعة", data=decoded_bytes, file_name=f"{row['extract_name']}.pdf", mime="application/octet-stream", key=f"dl_mng_ext_{row['id']}")
+                        except: pass
+                    else: st.info("لا يوجد ملف مرفق.")
+                    
+                    c1, c2 = st.columns(2)
+                    if is_planning_auth:
+                        if c1.button("✅ اعتماد فني وتحويل للحسابات", key=f"eng_app_{row['id']}", type="primary"):
+                            db_execute("UPDATE Extracts SET status='بانتظار الصرف' WHERE id=%s", (row['id'],)); st.rerun()
+                        if c2.button("❌ إرجاع لوجود مشاكل فنية", key=f"eng_rej_{row['id']}"):
+                            db_execute("UPDATE Extracts SET status='مرفوض فنياً' WHERE id=%s", (row['id'],)); st.rerun()
+                    else:
+                        if row['status'] != 'تم الصرف':
+                            if c1.button("✅ تم صرف المستخلص", key=f"pay_{row['id']}", type="primary"):
+                                db_execute("UPDATE Extracts SET status='تم الصرف' WHERE id=%s", (row['id'],)); st.rerun()
+        else: st.info("لا يوجد مستخلصات في صندوق الوارد الخاص بإدارتك حالياً.")
+    except: st.warning("جاري تهيئة جداول المستخلصات.")
+    conn.close()
+
+# ==========================================
+# بوابة العقود والشؤون القانونية (Legal Portal)
 # ==========================================
 def legal_portal():
     emp_id = st.session_state['emp_id']
@@ -974,7 +1077,7 @@ def legal_portal():
         render_employee_dashboard(emp_id, balance)
 
 # ==========================================
-# باقي البوابات (حسابات، تراخيص، تخطيط، مستخلصات، مبيعات، مهندس، موظف)
+# باقي البوابات (حسابات، تراخيص، مبيعات، مهندس، موظف)
 # ==========================================
 def accountant_portal():
     emp_id = st.session_state['emp_id']
@@ -1086,14 +1189,6 @@ def extracts_engineer_portal():
             else: st.info("لا توجد مستخلصات حالياً.")
         except: pass
         conn.close()
-    else: render_employee_dashboard(emp_id, balance)
-
-def planning_engineer_portal():
-    emp_id = st.session_state['emp_id']
-    _, _, balance = get_employee_info(emp_id)
-    render_sidebar("مهندس إدارة وتخطيط")
-    nav = st.radio("القائمة:", ["📄 مراجعة واعتماد المستخلصات", "👤 لوحتي الشخصية"], horizontal=True)
-    if nav == "📄 مراجعة واعتماد المستخلصات": render_manage_extracts()
     else: render_employee_dashboard(emp_id, balance)
 
 def sales_portal():
@@ -1248,7 +1343,7 @@ def render_employee_dashboard(emp_id, balance):
                             
                             st.markdown("---")
                             st.markdown("### 📝 إضافة تقرير حر أو تسجيل انصراف")
-                            selected_proj = st.selectbox("المشروع (الاتحاد) / مهامك", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى"])
+                            selected_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى"])
                             
                             if is_exempt:
                                 st.info("💡 حسابك مُعفى من إجبارية تقديم التقرير اليومي، يمكنك تسجيل الانصراف مباشرة.")
