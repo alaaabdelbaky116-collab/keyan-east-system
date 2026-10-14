@@ -105,10 +105,10 @@ def log_event(action_type, details=""):
         pass
 
 # ==========================================
-# 3. تهيئة وتحديث الجداول تلقائياً (Caching)
+# 3. تهيئة وتحديث الجداول تلقائياً (Caching v5)
 # ==========================================
 @st.cache_resource
-def setup_database_v4():
+def setup_database_v5():
     try:
         conn = get_db_connection()
         conn.autocommit = True
@@ -128,7 +128,8 @@ def setup_database_v4():
         cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT, impediment_notes TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, name TEXT, phone TEXT, national_id TEXT, address TEXT, notes TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS RealEstateUnits (id SERIAL PRIMARY KEY, project_name TEXT, unit_code TEXT, status TEXT, client_name TEXT, total_price REAL, notes TEXT, contract_file TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS UnitInstallments (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, amount REAL, due_date TEXT, paid_date TEXT, status TEXT, notes TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS UnitInstallments (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, amount REAL, due_date TEXT, paid_date TEXT, status TEXT, notes TEXT, collection_stage TEXT DEFAULT 'متابعة خدمة العملاء', call_notes TEXT DEFAULT '')''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS UnitResaleRequests (id SERIAL PRIMARY KEY, unit_code TEXT, project_name TEXT, old_client_name TEXT, old_price REAL, new_evaluated_price REAL, reason TEXT, requested_by TEXT, request_date TEXT, status TEXT DEFAULT 'بانتظار موافقة المالك', owner_notes TEXT DEFAULT '')''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Cheques (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, cheque_number TEXT, amount REAL, due_date TEXT, file_data TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS AuditLogs (id SERIAL PRIMARY KEY, log_time TEXT, username TEXT, role TEXT, action_type TEXT, details TEXT)''')
         
@@ -150,6 +151,8 @@ def setup_database_v4():
             "ALTER TABLE ProjectFinancials ADD COLUMN notes TEXT",
             "ALTER TABLE UnitInstallments ADD COLUMN paid_date TEXT",
             "ALTER TABLE UnitInstallments ADD COLUMN notes TEXT",
+            "ALTER TABLE UnitInstallments ADD COLUMN collection_stage TEXT DEFAULT 'متابعة خدمة العملاء'",
+            "ALTER TABLE UnitInstallments ADD COLUMN call_notes TEXT DEFAULT ''",
             "ALTER TABLE Clients ADD COLUMN name TEXT",
             "ALTER TABLE Clients ADD COLUMN phone TEXT",
             "ALTER TABLE Clients ADD COLUMN national_id TEXT",
@@ -311,6 +314,8 @@ def evaluate_client_commitment(inst_df):
     
     for _, row in inst_df.iterrows():
         status = str(row['status'])
+        if "ملغي" in status:
+            continue
         due_date = str(row['due_date'])
         
         if status == "مدفوع في الموعد" or status == "مدفوع":
