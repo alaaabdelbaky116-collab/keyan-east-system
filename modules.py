@@ -154,7 +154,89 @@ def render_smart_alerts():
                     st.warning(alert)
 
 # ==========================================
-# 2. لوحة القيادة وتقارير الحضور والمهام والمستخلصات
+# 2. إدارة الإجازات السنوية (للـ HR) وإعفاء التقارير (لرؤساء الأقسام)
+# ==========================================
+def render_leave_balance_management():
+    st.header("🌴 إدارة أرصدة الإجازات السنوية للموظفين (طوال العام)")
+    st.info("💡 يمكنك من هنا التحكم في رصيد الإجازات المتبقي لكل موظف (مثلاً: تحديد رصيد مخصص لموظف التحق بالشركة في آخر شهرين من السنة، أو تعديل الرصيد السنوي).")
+    
+    conn = get_db_connection()
+    current_year = get_egypt_time().strftime("%Y")
+    emps_df = pd.read_sql_query("SELECT emp_id, name, department, annual_balance FROM Employees ORDER BY name ASC", conn)
+    perms_df = pd.read_sql_query("SELECT emp_id, COUNT(*) as used_days FROM Permissions WHERE type='إجازة' AND date LIKE %s GROUP BY emp_id", conn, params=(f"{current_year}/%",))
+    conn.close()
+    
+    if not emps_df.empty:
+        merged_df = pd.merge(emps_df, perms_df, on='emp_id', how='left')
+        merged_df['used_days'] = merged_df['used_days'].fillna(0).astype(int)
+        merged_df['annual_balance'] = merged_df['annual_balance'].fillna(DEFAULT_ANNUAL_BALANCE).astype(int)
+        
+        with st.form("hr_update_leave_balance"):
+            st.subheader("✏️ تعديل أو تخصيص رصيد إجازات موظف")
+            c1, c2 = st.columns(2)
+            emp_options = merged_df['emp_id'].astype(str) + " - " + merged_df['name'] + " (الرصيد المتبقي حالياً: " + merged_df['annual_balance'].astype(str) + " يوم)"
+            selected_emp_str = c1.selectbox("اختر الموظف:", emp_options)
+            new_balance = c2.number_input("الرصيد المتبقي الجديد خلال السنة (بالأيام):", min_value=0, max_value=365, value=21, step=1)
+            reason_note = st.text_input("ملاحظة التعديل (مثال: تعيين جديد في آخر شهرين من السنة / تسوية رصيد)")
+            
+            if st.form_submit_button("تحديث رصيد الإجازات 💾", type="primary"):
+                emp_id_to_upd = selected_emp_str.split(" - ")[0].strip()
+                db_execute("UPDATE Employees SET annual_balance=%s WHERE emp_id=%s", (int(new_balance), emp_id_to_upd))
+                log_event("تعديل رصيد إجازات (HR)", f"كود الموظف: {emp_id_to_upd} - الرصيد الجديد: {new_balance} يوم - السبب: {reason_note}")
+                st.success(f"تم تحديث رصيد الإجازات للموظف بنجاح إلى ({new_balance}) يوم!")
+                st.rerun()
+                
+        st.divider()
+        st.subheader(f"📊 بيان أرصدة إجازات الموظفين لعام {current_year}")
+        disp_leaves = merged_df[['emp_id', 'name', 'department', 'used_days', 'annual_balance']].copy()
+        disp_leaves.columns = ['كود الموظف', 'اسم الموظف', 'القسم', f'إجازات مستنفدة في {current_year}', 'الرصيد المتبقي حالياً (يوم)']
+        st.dataframe(disp_leaves, use_container_width=True, hide_index=True)
+        
+        html_leaves = generate_html_report(f"تقرير أرصدة الإجازات السنوية لعام {current_year} - كيان الشرقية", disp_leaves)
+        st.download_button("🖨️ طباعة تقرير أرصدة الإجازات (PDF)", data=html_leaves, file_name=f"Leave_Balances_{current_year}.html", mime="text/html")
+    else:
+        st.info("لا يوجد موظفين مسجلين حالياً.")
+
+def render_department_exemption_manager(department_filter="الكل"):
+    st.header("🛡️ التحكم في إعفاء موظفي القسم من تقرير الانصراف اليومي")
+    st.info("💡 يمكنك من هنا استثناء أي موظف في قسمك من شرط كتابة التقرير اليومي عند تسجيل بصمة الانصراف، أو إلغاء الاستثناء عنه.")
+    
+    conn = get_db_connection()
+    if department_filter == "الكل":
+        emps_df = pd.read_sql_query("SELECT emp_id, name, department, exempt_report FROM Employees ORDER BY name ASC", conn)
+    else:
+        emps_df = pd.read_sql_query(
+            "SELECT emp_id, name, department, exempt_report FROM Employees WHERE department=%s OR secondary_department=%s ORDER BY name ASC", 
+            conn, params=(department_filter, department_filter)
+        )
+    conn.close()
+    
+    if not emps_df.empty:
+        emps_df['حالة الإعفاء الحالية'] = emps_df['exempt_report'].apply(lambda x: "معفى من التقرير ✅" if bool(x) else "ملزم بالتقرير ❌")
+        
+        with st.form("dept_exempt_form"):
+            c1, c2 = st.columns(2)
+            emp_opts = emps_df['emp_id'].astype(str) + " - " + emps_df['name'] + " (" + emps_df['حالة الإعفاء الحالية'] + ")"
+            sel_emp = c1.selectbox("اختر الموظف من قسمك:", emp_opts)
+            new_exempt_status = c2.radio("قرار رئيس القسم:", ["✔️ إعفاء الموظف من التقرير اليومي", "❌ إلزام الموظف بكتابة التقرير اليومي"], horizontal=True)
+            
+            if st.form_submit_button("حفظ وتطبيق القرار 🚀", type="primary"):
+                target_emp_id = sel_emp.split(" - ")[0].strip()
+                is_exempt_bool = True if "إعفاء" in new_exempt_status else False
+                db_execute("UPDATE Employees SET exempt_report=%s WHERE emp_id=%s", (is_exempt_bool, target_emp_id))
+                log_event("تعديل إعفاء التقرير اليومي", f"الموظف: {target_emp_id} - معفى: {is_exempt_bool}")
+                st.success("تم تحديث حالة إعفاء الموظف بنجاح!")
+                st.rerun()
+                
+        st.divider()
+        disp_ex = emps_df[['emp_id', 'name', 'department', 'حالة الإعفاء الحالية']].copy()
+        disp_ex.columns = ['كود الموظف', 'اسم الموظف', 'القسم', 'حالة التقرير اليومي']
+        st.dataframe(disp_ex, use_container_width=True, hide_index=True)
+    else:
+        st.info("لا يوجد موظفين مسجلين في هذا القسم حالياً.")
+
+# ==========================================
+# 3. لوحة القيادة وتقارير الحضور والمهام والمستخلصات
 # ==========================================
 def render_company_dashboard():
     st.header("📊 المؤشرات الحيوية والتفاعلية للشركة")
@@ -403,7 +485,7 @@ def render_manage_extracts():
                     else:
                         st.info("لا يوجد ملف مرفق.")
                     
-                    c1, c2 = st.columns(2)
+                    c1, c2, c3 = st.columns(3)
                     if is_planning_auth:
                         if c1.button("✅ اعتماد فني وتحويل للحسابات", key=f"eng_app_{row['id']}", type="primary"):
                             db_execute("UPDATE Extracts SET status='بانتظار الصرف' WHERE id=%s", (row['id'],))
@@ -419,6 +501,10 @@ def render_manage_extracts():
                                 db_execute("UPDATE Extracts SET status='تم الصرف' WHERE id=%s", (row['id'],))
                                 log_event("صرف مستخلص (حسابات)", f"مستخلص: {row['extract_name']} - مشروع: {row['project_name']}")
                                 st.rerun()
+                    if c3.button("🗑️ حذف المستخلص", key=f"del_ext_mng_{row['id']}"):
+                        db_execute("DELETE FROM Extracts WHERE id=%s", (row['id'],))
+                        log_event("حذف مستخلص", f"حذف المستخلص رقم {row['id']} ({row['extract_name']})")
+                        st.rerun()
         else:
             st.info("لا يوجد مستخلصات في صندوق الوارد الخاص بإدارتك حالياً.")
     except Exception as e:
@@ -427,7 +513,7 @@ def render_manage_extracts():
     conn.close()
 
 # ==========================================
-# 3. الموديول المالي (أقساط الجهاز vs أقساط التنفيذ ومساهمات الملاك)
+# 4. الموديول المالي (أقساط الجهاز vs أقساط التنفيذ ومساهمات الملاك)
 # ==========================================
 def render_financials_module(can_edit=True):
     st.header("💰 إدارة الالتزامات المالية للمشاريع (الجهاز vs التنفيذ ومساهمات الملاك)")
@@ -466,8 +552,8 @@ def render_financials_module(can_edit=True):
         
         if not dev_df.empty:
             if can_edit:
-                with st.expander("🔄 تحديث حالة سداد قسط جهاز"):
-                    u_c1, u_c2, u_c3 = st.columns(3)
+                with st.expander("🔄 تحديث حالة أو حذف قسط جهاز"):
+                    u_c1, u_c2, u_c3, u_c4 = st.columns(4)
                     dev_opts = dev_df['id'].astype(str) + " - " + dev_df['project_name'] + " (" + dev_df['installment_type'] + ")"
                     sel_dev = u_c1.selectbox("اختر القسط:", dev_opts)
                     new_dev_st = u_c2.selectbox("الحالة الجديدة:", ["مدفوع", "مستحق (لم يُدفع)", "متأخر"], key="upd_dev_st")
@@ -476,6 +562,12 @@ def render_financials_module(can_edit=True):
                         db_execute("UPDATE ProjectFinancials SET status=%s WHERE id=%s", (new_dev_st, dev_id))
                         log_event("تحديث قسط جهاز", f"تغيير حالة قسط رقم {dev_id} إلى {new_dev_st}")
                         st.success("تم التحديث!")
+                        st.rerun()
+                    if u_c4.button("🗑️ حذف القسط نهائياً", key="btn_del_dev"):
+                        dev_id = int(sel_dev.split(" - ")[0])
+                        db_execute("DELETE FROM ProjectFinancials WHERE id=%s", (dev_id,))
+                        log_event("حذف قسط جهاز", f"حذف قسط جهاز رقم {dev_id}")
+                        st.success("تم مسح القسط!")
                         st.rerun()
                         
             disp_dev = dev_df.drop(columns=['id'])
@@ -525,8 +617,8 @@ def render_financials_module(can_edit=True):
         
         if not exec_df.empty:
             if can_edit:
-                with st.expander("🔄 تحديث حالة سداد مساهمة مالك في التنفيذ"):
-                    u_c1, u_c2, u_c3 = st.columns(3)
+                with st.expander("🔄 تحديث حالة أو حذف مساهمة مالك في التنفيذ"):
+                    u_c1, u_c2, u_c3, u_c4 = st.columns(4)
                     exec_opts = exec_df['id'].astype(str) + " - " + exec_df['project_name'] + " | المساهم: " + exec_df['shareholder_name'].fillna('') + " (" + exec_df['installment_type'] + ")"
                     sel_exec = u_c1.selectbox("اختر دفعة المساهم:", exec_opts)
                     new_exec_st = u_c2.selectbox("الحالة الجديدة:", ["مدفوع", "مستحق (لم يُدفع)", "متأخر"], key="upd_exec_st")
@@ -535,6 +627,12 @@ def render_financials_module(can_edit=True):
                         db_execute("UPDATE ProjectFinancials SET status=%s WHERE id=%s", (new_exec_st, exec_id))
                         log_event("تحديث سداد مساهمة تنفيذ", f"تغيير حالة دفعة رقم {exec_id} إلى {new_exec_st}")
                         st.success("تم التحديث!")
+                        st.rerun()
+                    if u_c4.button("🗑️ حذف الدفعة نهائياً", key="btn_del_exec"):
+                        exec_id = int(sel_exec.split(" - ")[0])
+                        db_execute("DELETE FROM ProjectFinancials WHERE id=%s", (exec_id,))
+                        log_event("حذف دفعة تنفيذ", f"حذف دفعة تنفيذ رقم {exec_id}")
+                        st.success("تم مسح الدفعة!")
                         st.rerun()
                         
             disp_exec = exec_df.drop(columns=['id'])
@@ -552,11 +650,13 @@ def render_financials_module(can_edit=True):
             st.info("لا توجد أقساط تنفيذ أو مساهمات ملاك مسجلة حالياً.")
 
 # ==========================================
-# 4. موديول العملاء الشامل (بيانات، جدولة، متابعة تحصيل، تقييم، وكشف حساب PDF)
+# 5. موديول العملاء الشامل (مع إمكانية الحذف والتراجع)
 # ==========================================
 def render_clients_and_crm_module(mode="view"):
     is_sales = (mode == "sales")
     is_accountant = (mode == "accountant")
+    is_owner = (mode == "owner")
+    can_delete = is_sales or is_accountant or is_owner
     
     st.header("👥 إدارة العملاء، جدولة الأقساط، التقييم، وكشف الحساب")
     
@@ -719,10 +819,11 @@ def render_clients_and_crm_module(mode="view"):
             st.info("💼 **صلاحية الحسابات:** الأقساط المجدولة أدناه مضافة بواسطة خدمة العملاء. دورك هنا هو متابعة الدفع فقط وتحديد ما إذا كان العميل قد دفع أم لا.")
 
         if not inst_df.empty:
+            inst_opts = inst_df['id'].astype(str) + " - العميل: " + inst_df['client_name'].fillna('') + " | وحدة: " + inst_df['unit_code'].fillna('') + " | مبلغ: " + inst_df['amount'].astype(str) + " (" + inst_df['due_date'].fillna('') + ")"
+            
             if is_accountant:
                 with st.expander("💳 متابعة السداد وتأكيد الدفع (خاص بالمحاسب فقط)", expanded=True):
                     up1, up2, up3 = st.columns(3)
-                    inst_opts = inst_df['id'].astype(str) + " - العميل: " + inst_df['client_name'].fillna('') + " | وحدة: " + inst_df['unit_code'].fillna('') + " | مبلغ: " + inst_df['amount'].astype(str) + " (" + inst_df['due_date'].fillna('') + ")"
                     sel_inst_to_upd = up1.selectbox("اختر القسط لتحديث حالة دفعه:", inst_opts)
                     new_inst_st = up2.selectbox("هل دفع العميل؟ اختر الحالة:", ["مدفوع في الموعد", "مدفوع متأخر", "مستحق (لم يُدفع)", "متأخر"])
                     if up3.button("تأكيد حالة الدفع ✅", type="primary"):
@@ -731,6 +832,17 @@ def render_clients_and_crm_module(mode="view"):
                         db_execute("UPDATE UnitInstallments SET status=%s, paid_date=%s WHERE id=%s", (new_inst_st, paid_dt_val, inst_id_val))
                         log_event("تحديث دفع قسط عميل (حسابات)", f"تحديث قسط رقم {inst_id_val} إلى {new_inst_st}")
                         st.success("تم تحديث حالة الدفع وتحديث التقييم الائتماني للعميل!")
+                        st.rerun()
+                        
+            if can_delete:
+                with st.expander("🗑️ حذف قسط عميل (التراجع عن قسط مضاف بالخطأ)"):
+                    del_c1, del_c2 = st.columns([3, 1])
+                    sel_inst_del = del_c1.selectbox("اختر القسط المراد حذفه:", inst_opts, key="del_inst_sel")
+                    if del_c2.button("حذف القسط 🗑️", key="btn_del_inst"):
+                        inst_id_del = int(sel_inst_del.split(" - ")[0])
+                        db_execute("DELETE FROM UnitInstallments WHERE id=%s", (inst_id_del,))
+                        log_event("حذف قسط عميل", f"حذف القسط رقم {inst_id_del}")
+                        st.success("تم مسح القسط بنجاح!")
                         st.rerun()
                         
             disp_inst = inst_df.drop(columns=['id'])
@@ -775,6 +887,24 @@ def render_clients_and_crm_module(mode="view"):
                         st.error("يرجى إدخال اسم العميل ورقم الهاتف.")
                         
         if not clients_df.empty:
+            if can_delete:
+                with st.expander("🗑️ حذف عميل من السجل (مع إمكانية مسح وحداته وأقساطه)"):
+                    dc1, dc2, dc3 = st.columns([2, 2, 1])
+                    cl_del_opts = clients_df['id'].astype(str) + " - " + clients_df['name'].fillna('')
+                    sel_cl_del = dc1.selectbox("اختر العميل المراد مسحه:", cl_del_opts, key="sel_cl_del")
+                    cascade_del = dc2.checkbox("مسح جميع وحداته وأقساطه المرتبطة به أيضاً", value=True)
+                    if dc3.button("حذف العميل 🗑️", key="btn_del_cl"):
+                        cl_id_del = int(sel_cl_del.split(" - ")[0])
+                        cl_name_del = sel_cl_del.split(" - ")[1].strip()
+                        db_execute("DELETE FROM Clients WHERE id=%s", (cl_id_del,))
+                        if cascade_del:
+                            db_execute("DELETE FROM RealEstateUnits WHERE client_name=%s", (cl_name_del,))
+                            db_execute("DELETE FROM UnitInstallments WHERE client_name=%s", (cl_name_del,))
+                            db_execute("DELETE FROM Cheques WHERE client_name=%s", (cl_name_del,))
+                        log_event("حذف عميل", f"تم مسح العميل: {cl_name_del}")
+                        st.success(f"تم مسح العميل ({cl_name_del}) بنجاح!")
+                        st.rerun()
+                        
             disp_cl = clients_df.drop(columns=['id'])
             disp_cl.columns = ['اسم العميل', 'رقم الهاتف', 'الرقم القومي', 'العنوان', 'ملاحظات']
             st.dataframe(disp_cl, use_container_width=True, hide_index=True)
@@ -813,6 +943,18 @@ def render_clients_and_crm_module(mode="view"):
                         st.error("يرجى كتابة كود الوحدة.")
                         
         if not units_df.empty:
+            if can_delete:
+                with st.expander("🗑️ حذف وحدة عقارية (التراجع عن تسجيل وحدة)"):
+                    du1, du2 = st.columns([3, 1])
+                    u_del_opts = units_df['id'].astype(str) + " - " + units_df['unit_code'].fillna('') + " (" + units_df['project_name'].fillna('') + " | العميل: " + units_df['client_name'].fillna('') + ")"
+                    sel_u_del = du1.selectbox("اختر الوحدة المراد مسحها:", u_del_opts, key="sel_u_del")
+                    if du2.button("حذف الوحدة 🗑️", key="btn_del_u"):
+                        u_id_del = int(sel_u_del.split(" - ")[0])
+                        db_execute("DELETE FROM RealEstateUnits WHERE id=%s", (u_id_del,))
+                        log_event("حذف وحدة عقارية", f"تم مسح الوحدة رقم {u_id_del}")
+                        st.success("تم مسح بيانات الوحدة بنجاح!")
+                        st.rerun()
+                        
             disp_u = units_df.drop(columns=['id'])
             disp_u.columns = ['المشروع', 'كود الوحدة', 'الحالة', 'اسم العميل', 'إجمالي السعر', 'ملاحظات']
             st.dataframe(disp_u, use_container_width=True, hide_index=True)
@@ -820,7 +962,7 @@ def render_clients_and_crm_module(mode="view"):
             st.info("لا توجد وحدات مسجلة.")
 
 # ==========================================
-# 5. الشاشة المشتركة للموظفين (البصمة والتقارير والمهام)
+# 6. الشاشة المشتركة للموظفين (البصمة والتقارير والرصيد السنوي)
 # ==========================================
 def render_employee_dashboard(emp_id, balance):
     stats = get_employee_stats(emp_id)
@@ -828,6 +970,7 @@ def render_employee_dashboard(emp_id, balance):
     overtime_mins = stats[3]
     
     today_date = get_egypt_time().strftime("%Y/%m/%d")
+    current_year = get_egypt_time().strftime("%Y")
     now_dt = get_egypt_time()
     
     try:
@@ -835,6 +978,11 @@ def render_employee_dashboard(emp_id, balance):
         is_exempt = is_exempt[0] if is_exempt and is_exempt[0] is not None else False
     except:
         is_exempt = False
+        
+    try:
+        used_leaves_year = db_fetchone("SELECT COUNT(*) FROM Permissions WHERE emp_id=%s AND type='إجازة' AND date LIKE %s", (emp_id, f"{current_year}/%"))[0]
+    except:
+        used_leaves_year = 0
     
     try:
         has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
@@ -851,7 +999,7 @@ def render_employee_dashboard(emp_id, balance):
         pass
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("الرصيد المتبقي", f"{balance} يوم")
+    c1.metric(f"رصيد الإجازات المتبقي ({current_year})", f"{balance} يوم", f"تم استنفاد {used_leaves_year} يوم هذا العام")
     c2.metric("التأخيرات الكلية", f"{format_hhmm(delay_mins)} ساعة")
     c3.metric("الوقت الإضافي", f"{format_hhmm(overtime_mins)} ساعة")
     
@@ -976,20 +1124,37 @@ def render_employee_dashboard(emp_id, balance):
             notes = st.text_input("السبب أو التفاصيل")
             
             if st.form_submit_button("إرسال الطلب", type="primary"):
-                db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
-                log_event("تقديم طلب إجازة/إذن", f"النوع: {req_type} - التاريخ: {req_date}")
-                st.success("تم إرسال الطلب لمديرك المباشر بنجاح.")
+                if req_type == "إجازة" and balance <= 0:
+                    st.error("❌ عذراً، لقد استنفدت رصيد إجازاتك السنوية المتبقي بالكامل! يرجى مراجعة الـ HR.")
+                else:
+                    db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
+                    log_event("تقديم طلب إجازة/إذن", f"النوع: {req_type} - التاريخ: {req_date}")
+                    st.success("تم إرسال الطلب لمديرك المباشر بنجاح.")
                 
     elif sub_nav == "🌴 سجلاتي":
         conn = get_db_connection()
         try:
-            df = pd.read_sql_query("SELECT date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,))
+            df = pd.read_sql_query("SELECT id, date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,))
         except:
             df = pd.DataFrame()
         conn.close()
         
         if not df.empty:
-            df.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
-            st.dataframe(df, hide_index=True, use_container_width=True)
+            pending_my_reqs = df[df['status'] == 'قيد الانتظار']
+            if not pending_my_reqs.empty:
+                with st.expander("🗑️ إلغاء طلب قيد الانتظار (التراجع عن طلب)"):
+                    rc1, rc2 = st.columns([3, 1])
+                    r_opts = pending_my_reqs['id'].astype(str) + " - " + pending_my_reqs['req_type'] + " (" + pending_my_reqs['date'] + ")"
+                    sel_r_del = rc1.selectbox("اختر الطلب المراد إلغاؤه:", r_opts)
+                    if rc2.button("إلغاء الطلب 🗑️"):
+                        r_id_del = int(sel_r_del.split(" - ")[0])
+                        db_execute("DELETE FROM Requests WHERE id=%s", (r_id_del,))
+                        log_event("إلغاء طلب موظف", f"قام الموظف بإلغاء طلبه رقم {r_id_del}")
+                        st.success("تم إلغاء الطلب بنجاح!")
+                        st.rerun()
+                        
+            disp_r = df.drop(columns=['id'])
+            disp_r.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
+            st.dataframe(disp_r, hide_index=True, use_container_width=True)
         else:
             st.info("لا توجد طلبات مسجلة لك حتى الآن.")
