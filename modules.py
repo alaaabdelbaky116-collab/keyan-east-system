@@ -99,7 +99,17 @@ def render_sidebar(role_title):
                         st.success("تم التغيير بنجاح! احتفظ بها.")
                     else:
                         st.error("كلمة المرور قصيرة جداً.")
-                        
+   try:
+            pptx_bytes = generate_pptx_file()
+            st.download_button(
+                label="📊 تحميل شرح النظام (PowerPoint)",
+                data=pptx_bytes,
+                file_name="Keyan_ERP_Presentation.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                use_container_width=True
+            )
+        except Exception as e:
+            pass                     
         st.divider()
         if st.button("🚪 تسجيل الخروج", use_container_width=True):
             log_event("تسجيل خروج", "خروج من النظام")
