@@ -124,10 +124,10 @@ def log_event(action_type, details=""):
         pass
 
 # ==========================================
-# 3. إعداد الجداول (Caching v2) لتسريع الأداء
+# 3. إعداد الجداول وتحديث الأعمدة تلقائياً (Caching v3)
 # ==========================================
 @st.cache_resource
-def setup_database_v2():
+def setup_database_v3():
     try:
         conn = get_db_connection()
         conn.autocommit = True
@@ -145,13 +145,13 @@ def setup_database_v2():
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT, file_data TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT, impediment_notes TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, name TEXT UNIQUE, phone TEXT, national_id TEXT, address TEXT, notes TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, name TEXT, phone TEXT, national_id TEXT, address TEXT, notes TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS RealEstateUnits (id SERIAL PRIMARY KEY, project_name TEXT, unit_code TEXT, status TEXT, client_name TEXT, total_price REAL, notes TEXT, contract_file TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS UnitInstallments (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, amount REAL, due_date TEXT, paid_date TEXT, status TEXT, notes TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Cheques (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, cheque_number TEXT, amount REAL, due_date TEXT, file_data TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS AuditLogs (id SERIAL PRIMARY KEY, log_time TEXT, username TEXT, role TEXT, action_type TEXT, details TEXT)''')
         
-        # التحديثات التلقائية للجداول القديمة
+        # التحديثات التلقائية الشاملة لجميع الجداول القديمة لمنع خطأ UndefinedColumn
         alter_queries = [
             "ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT",
             "ALTER TABLE ProjectDrawings ADD COLUMN file_data TEXT",
@@ -161,12 +161,25 @@ def setup_database_v2():
             "ALTER TABLE Extracts ADD COLUMN impediment_notes TEXT",
             "ALTER TABLE Users ADD COLUMN secondary_role TEXT DEFAULT 'none'",
             "ALTER TABLE RealEstateUnits ADD COLUMN contract_file TEXT",
+            "ALTER TABLE RealEstateUnits ADD COLUMN notes TEXT",
+            "ALTER TABLE RealEstateUnits ADD COLUMN total_price REAL DEFAULT 0.0",
+            "ALTER TABLE RealEstateUnits ADD COLUMN client_name TEXT",
             "ALTER TABLE ProjectFinancials ADD COLUMN category TEXT DEFAULT 'قسط جهاز'",
             "ALTER TABLE ProjectFinancials ADD COLUMN shareholder_name TEXT DEFAULT 'الشركة'",
             "ALTER TABLE ProjectFinancials ADD COLUMN share_percentage REAL DEFAULT 100.0",
             "ALTER TABLE ProjectFinancials ADD COLUMN notes TEXT",
             "ALTER TABLE UnitInstallments ADD COLUMN paid_date TEXT",
-            "ALTER TABLE UnitInstallments ADD COLUMN notes TEXT"
+            "ALTER TABLE UnitInstallments ADD COLUMN notes TEXT",
+            "ALTER TABLE Clients ADD COLUMN name TEXT",
+            "ALTER TABLE Clients ADD COLUMN phone TEXT",
+            "ALTER TABLE Clients ADD COLUMN national_id TEXT",
+            "ALTER TABLE Clients ADD COLUMN address TEXT",
+            "ALTER TABLE Clients ADD COLUMN notes TEXT",
+            "ALTER TABLE AuditLogs ADD COLUMN log_time TEXT",
+            "ALTER TABLE AuditLogs ADD COLUMN username TEXT",
+            "ALTER TABLE AuditLogs ADD COLUMN role TEXT",
+            "ALTER TABLE AuditLogs ADD COLUMN action_type TEXT",
+            "ALTER TABLE AuditLogs ADD COLUMN details TEXT"
         ]
         for q in alter_queries:
             try:
@@ -183,7 +196,7 @@ def setup_database_v2():
     except Exception as e:
         return False
 
-setup_database_v2()
+setup_database_v3()
 
 # ==========================================
 # 4. الثوابت والقوائم ومولدات التقارير (PDF)
@@ -345,7 +358,6 @@ def evaluate_client_commitment(inst_df):
         return "⚪ لم يتم جدولة أقساط بعد", 100.0, 0, 0
         
     today_str = get_egypt_time().strftime("%Y/%m/%d")
-    total_count = len(inst_df)
     on_time_count = 0
     late_or_overdue_count = 0
     evaluated_installments = 0
@@ -869,7 +881,6 @@ def render_financials_module(can_edit=True):
             disp_exec.columns = ['المشروع', 'بند التنفيذ', 'اسم المالك المساهم', 'نسبة المساهمة %', 'المبلغ المطلوب', 'تاريخ الاستحقاق', 'حالة السداد', 'ملاحظات']
             st.dataframe(disp_exec, use_container_width=True, hide_index=True)
             
-            # ملخص مساهمات الملاك
             st.markdown("#### 📊 ملخص موقف الملاك المساهمين في أقساط التنفيذ")
             sh_summary = exec_df.groupby(['project_name', 'shareholder_name', 'status'])['amount'].sum().unstack(fill_value=0).reset_index()
             sh_summary.rename(columns={'project_name': 'المشروع', 'shareholder_name': 'اسم المالك المساهم'}, inplace=True)
@@ -894,13 +905,28 @@ def render_clients_and_crm_module(can_edit=True):
     ])
     
     conn = get_db_connection()
-    clients_df = pd.read_sql_query("SELECT id, name, phone, national_id, address, notes FROM Clients ORDER BY name ASC", conn)
-    units_df = pd.read_sql_query("SELECT id, project_name, unit_code, status, client_name, total_price, notes FROM RealEstateUnits ORDER BY id DESC", conn)
-    inst_df = pd.read_sql_query("SELECT id, unit_code, client_name, amount, due_date, paid_date, status, notes FROM UnitInstallments ORDER BY due_date ASC", conn)
-    cheques_df = pd.read_sql_query("SELECT unit_code, client_name, cheque_number, amount, due_date, status FROM Cheques ORDER BY due_date ASC", conn)
+    try:
+        clients_df = pd.read_sql_query("SELECT id, name, phone, national_id, address, notes FROM Clients ORDER BY name ASC", conn)
+    except:
+        clients_df = pd.DataFrame(columns=['id', 'name', 'phone', 'national_id', 'address', 'notes'])
+        
+    try:
+        units_df = pd.read_sql_query("SELECT id, project_name, unit_code, status, client_name, total_price, notes FROM RealEstateUnits ORDER BY id DESC", conn)
+    except:
+        units_df = pd.DataFrame(columns=['id', 'project_name', 'unit_code', 'status', 'client_name', 'total_price', 'notes'])
+        
+    try:
+        inst_df = pd.read_sql_query("SELECT id, unit_code, client_name, amount, due_date, paid_date, status, notes FROM UnitInstallments ORDER BY due_date ASC", conn)
+    except:
+        inst_df = pd.DataFrame(columns=['id', 'unit_code', 'client_name', 'amount', 'due_date', 'paid_date', 'status', 'notes'])
+        
+    try:
+        cheques_df = pd.read_sql_query("SELECT unit_code, client_name, cheque_number, amount, due_date, status FROM Cheques ORDER BY due_date ASC", conn)
+    except:
+        cheques_df = pd.DataFrame(columns=['unit_code', 'client_name', 'cheque_number', 'amount', 'due_date', 'status'])
     conn.close()
     
-    client_names_list = clients_df['name'].tolist() if not clients_df.empty else []
+    client_names_list = clients_df['name'].dropna().tolist() if not clients_df.empty else []
     
     # --- 1. سجل بيانات العملاء ---
     with crm_tabs[0]:
@@ -919,10 +945,17 @@ def render_clients_and_crm_module(can_edit=True):
                 if st.form_submit_button("حفظ بيانات العميل 💾", type="primary"):
                     if cl_name.strip() and cl_phone.strip():
                         try:
-                            db_execute(
-                                "INSERT INTO Clients (name, phone, national_id, address, notes) VALUES (%s, %s, %s, %s, %s) ON CONFLICT (name) DO UPDATE SET phone=EXCLUDED.phone, national_id=EXCLUDED.national_id, address=EXCLUDED.address, notes=EXCLUDED.notes",
-                                (cl_name.strip(), cl_phone.strip(), cl_nid.strip(), cl_addr.strip(), cl_notes.strip())
-                            )
+                            existing = db_fetchone("SELECT id FROM Clients WHERE name=%s", (cl_name.strip(),))
+                            if existing:
+                                db_execute(
+                                    "UPDATE Clients SET phone=%s, national_id=%s, address=%s, notes=%s WHERE id=%s",
+                                    (cl_phone.strip(), cl_nid.strip(), cl_addr.strip(), cl_notes.strip(), existing[0])
+                                )
+                            else:
+                                db_execute(
+                                    "INSERT INTO Clients (name, phone, national_id, address, notes) VALUES (%s, %s, %s, %s, %s)",
+                                    (cl_name.strip(), cl_phone.strip(), cl_nid.strip(), cl_addr.strip(), cl_notes.strip())
+                                )
                             log_event("إضافة/تحديث عميل", f"العميل: {cl_name.strip()} - هاتف: {cl_phone.strip()}")
                             st.success(f"تم حفظ بيانات العميل ({cl_name}) بنجاح!")
                             st.rerun()
@@ -986,7 +1019,7 @@ def render_clients_and_crm_module(can_edit=True):
             with st.form("add_client_installment"):
                 c1, c2, c3 = st.columns(3)
                 if not sold_units.empty:
-                    u_opts = sold_units['unit_code'] + " | " + sold_units['client_name'].fillna('')
+                    u_opts = sold_units['unit_code'].fillna('') + " | " + sold_units['client_name'].fillna('')
                     sel_u_cl = c1.selectbox("اختر الوحدة والعميل", u_opts)
                 else:
                     sel_u_cl = c1.text_input("كود الوحدة | اسم العميل")
@@ -1045,7 +1078,7 @@ def render_clients_and_crm_module(can_edit=True):
             (units_df['client_name'].dropna().unique().tolist() if not units_df.empty else []) +
             (inst_df['client_name'].dropna().unique().tolist() if not inst_df.empty else [])
         )))
-        all_known_clients = [c for c in all_known_clients if c.strip() != ""]
+        all_known_clients = [c for c in all_known_clients if str(c).strip() != ""]
         
         if not all_known_clients:
             st.info("يرجى تسجيل عملاء وأقساط أولاً لعرض التقييم وكشف الحساب.")
@@ -1054,20 +1087,17 @@ def render_clients_and_crm_module(can_edit=True):
             
             cl_info_row = clients_df[clients_df['name'] == selected_client_stmt] if not clients_df.empty else pd.DataFrame()
             cl_phone_val = cl_info_row.iloc[0]['phone'] if not cl_info_row.empty else "غير مسجل"
-            cl_nid_val = cl_info_row.iloc[0]['national_id'] if not cl_info_row.empty else "غير مسجل"
             
             cl_units = units_df[units_df['client_name'] == selected_client_stmt] if not units_df.empty else pd.DataFrame()
             cl_inst = inst_df[inst_df['client_name'] == selected_client_stmt] if not inst_df.empty else pd.DataFrame()
-            cl_chq = cheques_df[cheques_df['client_name'] == selected_client_stmt] if not cheques_df.empty else pd.DataFrame()
             
-            total_contracts_val = cl_units['total_price'].sum() if not cl_units.empty else 0.0
-            paid_inst_val = cl_inst[cl_inst['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر'])]['amount'].sum() if not cl_inst.empty else 0.0
-            unpaid_inst_val = cl_inst[cl_inst['status'].isin(['مستحق (لم يُدفع)', 'متأخر'])]['amount'].sum() if not cl_inst.empty else 0.0
+            total_contracts_val = cl_units['total_price'].fillna(0).sum() if not cl_units.empty else 0.0
+            paid_inst_val = cl_inst[cl_inst['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر'])]['amount'].fillna(0).sum() if not cl_inst.empty else 0.0
+            unpaid_inst_val = cl_inst[cl_inst['status'].isin(['مستحق (لم يُدفع)', 'متأخر'])]['amount'].fillna(0).sum() if not cl_inst.empty else 0.0
             remaining_from_contract = max(0.0, total_contracts_val - paid_inst_val)
             
             badge_text, score_val, on_time_cnt, late_cnt = evaluate_client_commitment(cl_inst)
             
-            # عرض بطاقة التقييم والملخص
             st.markdown("---")
             if score_val >= 80:
                 st.success(f"### تقييم التزام العميل: {badge_text}")
@@ -1095,11 +1125,10 @@ def render_clients_and_crm_module(can_edit=True):
                 stmt_table = cl_inst[['unit_code', 'notes', 'amount', 'due_date', 'paid_date', 'status']].copy()
                 stmt_table.columns = ['الوحدة', 'البيان', 'قيمة القسط', 'تاريخ الاستحقاق', 'تاريخ السداد', 'حالة الدفع']
                 
-                # إضافة صف الإجمالي في كشف الحساب
                 total_stmt_row = pd.DataFrame([{
                     'الوحدة': 'الإجمالي',
                     'البيان': f'إجمالي المسدد: {paid_inst_val:,.2f} ج.م | غير مسدد: {unpaid_inst_val:,.2f} ج.م',
-                    'قيمة القسط': cl_inst['amount'].sum(),
+                    'قيمة القسط': cl_inst['amount'].fillna(0).sum(),
                     'تاريخ الاستحقاق': '',
                     'تاريخ السداد': '',
                     'حالة الدفع': badge_text
@@ -1340,7 +1369,10 @@ def admin_portal():
         st.header("🕵️ سجل حركات النظام والمراقبة (System Audit Logs)")
         st.info("يعرض هذا السجل جميع الحركات والعمليات التي تمت على النظام بالتاريخ، الوقت، واسم المستخدم.")
         conn = get_db_connection()
-        logs_df = pd.read_sql_query("SELECT log_time, username, role, action_type, details FROM AuditLogs ORDER BY id DESC LIMIT 500", conn)
+        try:
+            logs_df = pd.read_sql_query("SELECT log_time, username, role, action_type, details FROM AuditLogs ORDER BY id DESC LIMIT 500", conn)
+        except:
+            logs_df = pd.DataFrame()
         conn.close()
         
         if not logs_df.empty:
@@ -1995,7 +2027,7 @@ def legal_portal():
         
         with st.form("add_contract"):
             if not units.empty:
-                unit_opts = units['unit_code'] + " - " + units['client_name'].fillna('') + " (" + units['project_name'] + ")"
+                unit_opts = units['unit_code'].fillna('') + " - " + units['client_name'].fillna('') + " (" + units['project_name'].fillna('') + ")"
                 sel_unit = st.selectbox("اختر الوحدة المباعة:", unit_opts)
             else:
                 sel_unit = st.text_input("كود الوحدة")
@@ -2036,7 +2068,7 @@ def legal_portal():
         with st.form("add_cheque"):
             c1, c2 = st.columns(2)
             if not units.empty:
-                unit_opts = units['unit_code'] + " - " + units['client_name'].fillna('')
+                unit_opts = units['unit_code'].fillna('') + " - " + units['client_name'].fillna('')
                 chq_unit = c2.selectbox("اختر الوحدة والعميل:", unit_opts)
             else:
                 chq_unit = c2.text_input("كود الوحدة")
