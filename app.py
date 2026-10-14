@@ -1,6 +1,5 @@
 import streamlit as st
 
-# إعداد الصفحة يجب أن يكون أول أمر في الملف الرئيسي
 st.set_page_config(page_title="كيان الشرقية للاستثمار العقاري", page_icon="🏗️", layout="wide")
 
 import pandas as pd
@@ -11,7 +10,6 @@ import tempfile
 from db import *
 from modules import *
 
-# تهيئة الجلسة والتصميم وقاعدة البيانات
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 
@@ -77,7 +75,18 @@ def admin_portal():
     render_sidebar("الإدارة التكنولوجية (IT/Admin)")
     nav = st.radio(
         "القائمة الرئيسية:", 
-        ["🕵️ سجل المراقبة (Logs)", "📊 تحليل البصمة", "✅ الطلبات", "➕ إنشاء/تعديل حساب", "⚙ إدارة الحسابات", "📍 المواقع", "📌 تقارير المناديب", "💾 النسخ الاحتياطي"], 
+        [
+            "🕵️ سجل المراقبة (Logs)", 
+            "🗑️ مسح البيانات والتراجع", 
+            "🌴 أرصدة الإجازات",
+            "➕ إنشاء/تعديل حساب", 
+            "⚙ إدارة الحسابات", 
+            "📍 المواقع", 
+            "📌 تقارير المناديب", 
+            "📊 تحليل البصمة", 
+            "✅ الطلبات", 
+            "💾 النسخ الاحتياطي"
+        ], 
         horizontal=True
     )
     st.divider()
@@ -87,7 +96,7 @@ def admin_portal():
         st.info("يعرض هذا السجل جميع الحركات والعمليات التي تمت على النظام بالتاريخ، الوقت، واسم المستخدم.")
         conn = get_db_connection()
         try:
-            logs_df = pd.read_sql_query("SELECT log_time, username, role, action_type, details FROM AuditLogs ORDER BY id DESC LIMIT 500", conn)
+            logs_df = pd.read_sql_query("SELECT id, log_time, username, role, action_type, details FROM AuditLogs ORDER BY id DESC LIMIT 500", conn)
         except:
             logs_df = pd.DataFrame()
         conn.close()
@@ -97,7 +106,7 @@ def admin_portal():
             user_filter = f_c1.selectbox("فلترة حسب المستخدم:", ["الكل"] + sorted(logs_df['username'].dropna().unique().tolist()))
             action_filter = f_c2.selectbox("فلترة حسب نوع العملية:", ["الكل"] + sorted(logs_df['action_type'].dropna().unique().tolist()))
             
-            filtered_logs = logs_df.copy()
+            filtered_logs = logs_df.drop(columns=['id']).copy()
             if user_filter != "الكل":
                 filtered_logs = filtered_logs[filtered_logs['username'] == user_filter]
             if action_filter != "الكل":
@@ -110,6 +119,92 @@ def admin_portal():
             st.download_button("🖨️ طباعة سجل المراقبة (PDF)", data=html_logs, file_name="System_Audit_Logs.html", mime="text/html", type="primary")
         else:
             st.info("لا توجد حركات مسجلة بعد.")
+
+    elif nav == "🗑️ مسح البيانات والتراجع":
+        st.header("🗑️ مركز مسح البيانات، التراجع عن العمليات، وتصفير النظام")
+        
+        reset_tabs = st.tabs(["🎯 التراجع وحذف عملية محددة", "⚠️ تصفير ومسح شامل للداتا (Factory Reset)"])
+        
+        with reset_tabs[0]:
+            st.subheader("🎯 حذف أي عملية أو سجل محدد من النظام")
+            table_map = {
+                "العملاء (Clients)": ("Clients", "id", "SELECT id, name, phone, address FROM Clients ORDER BY id DESC"),
+                "الوحدات العقارية (RealEstateUnits)": ("RealEstateUnits", "id", "SELECT id, project_name, unit_code, status, client_name, total_price FROM RealEstateUnits ORDER BY id DESC"),
+                "أقساط العملاء (UnitInstallments)": ("UnitInstallments", "id", "SELECT id, unit_code, client_name, amount, due_date, status FROM UnitInstallments ORDER BY id DESC"),
+                "الشيكات البنكية (Cheques)": ("Cheques", "id", "SELECT id, unit_code, client_name, cheque_number, amount, due_date, status FROM Cheques ORDER BY id DESC"),
+                "أقساط الجهاز والتنفيذ (ProjectFinancials)": ("ProjectFinancials", "id", "SELECT id, project_name, category, installment_type, shareholder_name, amount, due_date, status FROM ProjectFinancials ORDER BY id DESC"),
+                "المستخلصات الهندسية (Extracts)": ("Extracts", "id", "SELECT id, project_name, extract_name, amount, date, created_by, status FROM Extracts ORDER BY id DESC"),
+                "التراخيص (ProjectLicenses)": ("ProjectLicenses", "id", "SELECT id, project_name, license_name, due_date, status FROM ProjectLicenses ORDER BY id DESC"),
+                "الرسومات الهندسية (ProjectDrawings)": ("ProjectDrawings", "id", "SELECT id, project_name, drawing_name, due_date, status FROM ProjectDrawings ORDER BY id DESC"),
+                "المهام المسندة (Tasks)": ("Tasks", "id", "SELECT id, emp_id, project_name, task_desc, due_date, status FROM Tasks ORDER BY id DESC"),
+                "طلبات الإجازات والأذونات (Requests)": ("Requests", "id", "SELECT id, emp_id, date, req_type, status, notes FROM Requests ORDER BY id DESC"),
+                "سجلات بصمة الويب (WebAttendance)": ("WebAttendance", "id", "SELECT id, emp_id, date, time, action, location_name, project_name FROM WebAttendance ORDER BY id DESC LIMIT 200")
+            }
+            
+            sel_tbl_label = st.selectbox("اختر القسم / الجدول الذي تريد حذف عملية منه:", list(table_map.keys()))
+            tbl_name, pk_col, preview_query = table_map[sel_tbl_label]
+            
+            conn = get_db_connection()
+            try:
+                tbl_df = pd.read_sql_query(preview_query, conn)
+            except:
+                tbl_df = pd.DataFrame()
+            conn.close()
+            
+            if not tbl_df.empty:
+                st.dataframe(tbl_df, use_container_width=True, hide_index=True)
+                del_col1, del_col2 = st.columns([3, 1])
+                rec_options = [f"{row[pk_col]} | " + " - ".join([str(val) for col, val in row.items() if col != pk_col and pd.notna(val)][:4]) for _, row in tbl_df.iterrows()]
+                sel_rec = del_col1.selectbox("حدد السجل المراد مسحه:", rec_options)
+                if del_col2.button("حذف السجل المحدد 🗑️", type="primary"):
+                    rec_id = int(sel_rec.split(" | ")[0])
+                    db_execute(f"DELETE FROM {tbl_name} WHERE {pk_col}=%s", (rec_id,))
+                    log_event("حذف سجل من الإدارة", f"الجدول: {tbl_name} - رقم السجل: {rec_id}")
+                    st.success(f"تم مسح السجل رقم ({rec_id}) من ({sel_tbl_label}) بنجاح!")
+                    st.rerun()
+            else:
+                st.info("هذا القسم فارغ حالياً ولا توجد به سجلات.")
+
+        with reset_tabs[1]:
+            st.subheader("⚠️ مسح وتصفير أقسام كاملة أو تصفير السيستم بالكامل")
+            st.warning("تنبيه هام: هذه العملية تقوم بمسح جميع البيانات المسجلة في الأقسام المحددة نهائياً لتنظيف السيستم من الداتا التجريبية.")
+            
+            wipe_options = {
+                "مسح جميع العملاء، الوحدات، الأقساط، والشيكات": ["Clients", "RealEstateUnits", "UnitInstallments", "Cheques"],
+                "مسح جميع أقساط الجهاز وأقساط التنفيذ ومساهمات الملاك": ["ProjectFinancials"],
+                "مسح جميع المستخلصات والتراخيص والرسومات الهندسية": ["Extracts", "ProjectLicenses", "ProjectDrawings"],
+                "مسح جميع سجلات البصمة، المهام، وطلبات الإجازات": ["WebAttendance", "Tasks", "Requests", "Permissions", "MonthlyStats"],
+                "مسح سجل المراقبة (Audit Logs)": ["AuditLogs"],
+                "🔥 مسح شامل لجميع الداتا والعمليات بالكامل (مع الاحتفاظ بحسابات الأدمن والمالك فقط)": [
+                    "Clients", "RealEstateUnits", "UnitInstallments", "Cheques", 
+                    "ProjectFinancials", "Extracts", "ProjectLicenses", "ProjectDrawings", 
+                    "WebAttendance", "Tasks", "Requests", "Permissions", "MonthlyStats", "Locations"
+                ]
+            }
+            
+            selected_wipe = st.selectbox("اختر نوع المسح الشامل المطلوب:", list(wipe_options.keys()))
+            also_delete_emps = st.checkbox("مسح جميع حسابات الموظفين أيضاً (الإبقاء على حساب admin و owner فقط)")
+            confirm_wipe = st.checkbox("✅ أقر وأؤكد رغبتي في مسح هذه البيانات نهائياً بدون رجعة")
+            
+            if st.button("🚨 تنفيذ المسح الشامل الآن", type="primary"):
+                if not confirm_wipe:
+                    st.error("يرجى وضع علامة صح على مربع التأكيد أولاً قبل المسح!")
+                else:
+                    tables_to_clear = wipe_options[selected_wipe]
+                    for t in tables_to_clear:
+                        try:
+                            db_execute(f"DELETE FROM {t}")
+                        except:
+                            pass
+                    if also_delete_emps:
+                        db_execute("DELETE FROM Users WHERE LOWER(username) NOT IN ('admin', 'owner')")
+                        db_execute("DELETE FROM Employees WHERE LOWER(emp_id) NOT IN ('0', 'owner')")
+                    log_event("تصفير ومسح بيانات شامل", f"تم تنفيذ: {selected_wipe}")
+                    st.success("✅ تم تصفير ومسح جميع البيانات المحددة بنجاح وأصبح السيستم نظيفاً وجاهزاً!")
+                    st.rerun()
+
+    elif nav == "🌴 أرصدة الإجازات":
+        render_leave_balance_management()
 
     elif nav == "📊 تحليل البصمة":
         st.header("تحليل ملف الحضور والانصراف (من الإكسيل)")
@@ -154,17 +249,19 @@ def admin_portal():
             new_user = c7.text_input("اسم المستخدم للدخول")
             new_pwd = c8.text_input("كلمة المرور")
             
-            new_phone = c7.text_input("رقم الهاتف")
+            c9, c10 = st.columns(2)
+            new_phone = c9.text_input("رقم الهاتف")
+            new_balance = c10.number_input("رصيد الإجازات السنوي المخصص للموظف (يوم)", min_value=0, max_value=365, value=DEFAULT_ANNUAL_BALANCE, step=1)
             new_exempt = st.checkbox("✔️ إعفاء الموظف من إجبارية كتابة التقرير اليومي")
             
             if st.form_submit_button("إنشاء الحساب", type="primary"):
                 if new_user and new_pwd and new_emp_id and new_name:
                     try:
-                        db_execute("INSERT INTO Employees (emp_id, name, department, secondary_department, annual_balance, phone, exempt_report) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department, secondary_department=EXCLUDED.secondary_department, phone=EXCLUDED.phone, exempt_report=EXCLUDED.exempt_report", 
-                                   (new_emp_id, new_name, new_dept, new_sec_dept, DEFAULT_ANNUAL_BALANCE, new_phone, new_exempt))
+                        db_execute("INSERT INTO Employees (emp_id, name, department, secondary_department, annual_balance, phone, exempt_report) VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department, secondary_department=EXCLUDED.secondary_department, annual_balance=EXCLUDED.annual_balance, phone=EXCLUDED.phone, exempt_report=EXCLUDED.exempt_report", 
+                                   (new_emp_id, new_name, new_dept, new_sec_dept, int(new_balance), new_phone, new_exempt))
                         db_execute("INSERT INTO Users (username, password, role, secondary_role, emp_id) VALUES (%s, %s, %s, %s, %s)", 
                                    (new_user, new_pwd, ROLE_MAP[role_choice], ROLE_MAP[sec_role_choice], new_emp_id))
-                        log_event("إنشاء حساب موظف", f"الاسم: {new_name} - المستخدم: {new_user}")
+                        log_event("إنشاء حساب موظف", f"الاسم: {new_name} - المستخدم: {new_user} - رصيد الإجازات: {new_balance}")
                         st.success(f"تم إنشاء حساب ({new_name}) بنجاح!")
                     except:
                         st.error("اسم المستخدم مسجل مسبقاً!")
@@ -172,12 +269,12 @@ def admin_portal():
     elif nav == "⚙ إدارة الحسابات":
         st.header("إدارة حسابات المستخدمين")
         conn = get_db_connection()
-        users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, e.secondary_department, e.phone, e.exempt_report, u.role, u.secondary_role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id ORDER BY u.username ASC", conn)
+        users_df = pd.read_sql_query("SELECT u.username, u.password, u.emp_id, e.name, e.department, e.secondary_department, e.annual_balance, e.phone, e.exempt_report, u.role, u.secondary_role FROM Users u LEFT JOIN Employees e ON u.emp_id = e.emp_id ORDER BY u.username ASC", conn)
         conn.close()
         
         if not users_df.empty:
             display_df = users_df.copy()
-            display_df.columns = ['المستخدم', 'الباسورد', 'الكود', 'الاسم', 'القسم الأساسي', 'القسم الإضافي', 'الهاتف', 'معفى', 'الصلاحية 1', 'الصلاحية 2']
+            display_df.columns = ['المستخدم', 'الباسورد', 'الكود', 'الاسم', 'القسم الأساسي', 'القسم الإضافي', 'رصيد الإجازات', 'الهاتف', 'معفى', 'الصلاحية 1', 'الصلاحية 2']
             display_df['الصلاحية 1'] = display_df['الصلاحية 1'].map(DISPLAY_MAP)
             display_df['الصلاحية 2'] = display_df['الصلاحية 2'].map(DISPLAY_MAP)
             display_df['معفى'] = display_df['معفى'].map({True: 'نعم', False: 'لا', None: 'لا'})
@@ -195,6 +292,7 @@ def admin_portal():
             curr_dept = curr_data['department'] if pd.notna(curr_data['department']) and curr_data['department'] in COMPANY_DEPARTMENTS else COMPANY_DEPARTMENTS[0]
             curr_sec_dept = curr_data['secondary_department'] if pd.notna(curr_data['secondary_department']) and curr_data['secondary_department'] in ["لا يوجد"] + COMPANY_DEPARTMENTS else "لا يوجد"
             curr_phone = curr_data['phone'] if pd.notna(curr_data['phone']) else ""
+            curr_bal = int(curr_data['annual_balance']) if pd.notna(curr_data['annual_balance']) else DEFAULT_ANNUAL_BALANCE
             curr_exempt = curr_data['exempt_report'] if pd.notna(curr_data['exempt_report']) else False
             
             r1_txt = ROLE_REVERSE_MAP.get(curr_role, "موظف عادي (Employee)")
@@ -217,8 +315,10 @@ def admin_portal():
                 new_role_choice = c6.selectbox("الصلاحية الأساسية", valid_roles, index=idx1)
                 new_sec_role_choice = c5.selectbox("الصلاحية الإضافية", ROLE_OPTIONS, index=idx2)
                 
-                new_pwd = c6.text_input("كلمة المرور الجديدة (اختياري)")
-                edit_phone = c5.text_input("تعديل رقم الهاتف", value=curr_phone)
+                c7, c8, c9 = st.columns(3)
+                new_pwd = c7.text_input("كلمة المرور الجديدة (اختياري)")
+                edit_phone = c8.text_input("تعديل رقم الهاتف", value=curr_phone)
+                edit_bal = c9.number_input("تعديل رصيد الإجازات المتبقي (يوم)", min_value=0, max_value=365, value=curr_bal)
                 edit_exempt = st.checkbox("✔️ إعفاء الموظف من إجبارية تقديم التقرير اليومي", value=bool(curr_exempt))
                 
                 if st.form_submit_button("تحديث البيانات الشامل", type="primary"):
@@ -239,8 +339,8 @@ def admin_portal():
                         db_execute(f"UPDATE Users SET {', '.join(updates)} WHERE username=%s", tuple(params))
                         
                         if curr_emp_id and str(curr_emp_id) not in ['0', 'owner']:
-                            db_execute("UPDATE Employees SET name=%s, department=%s, secondary_department=%s, phone=%s, exempt_report=%s WHERE emp_id=%s", 
-                                       (new_name.strip() if new_name.strip() else curr_name, new_dept, new_sec_dept, edit_phone, edit_exempt, curr_emp_id))
+                            db_execute("UPDATE Employees SET name=%s, department=%s, secondary_department=%s, annual_balance=%s, phone=%s, exempt_report=%s WHERE emp_id=%s", 
+                                       (new_name.strip() if new_name.strip() else curr_name, new_dept, new_sec_dept, int(edit_bal), edit_phone, edit_exempt, curr_emp_id))
                         log_event("تعديل حساب مستخدم", f"تعديل بيانات وصلاحيات الحساب: {selected_user}")
                         st.success("تم التحديث بنجاح!")
                         st.rerun()
@@ -382,6 +482,10 @@ def owner_portal():
                             pass
                     else:
                         st.info("لا يوجد مستند مرفق لهذا الترخيص.")
+                    if st.button("🗑️ حذف الترخيص", key=f"del_lic_own_{row['id']}"):
+                        db_execute("DELETE FROM ProjectLicenses WHERE id=%s", (row['id'],))
+                        log_event("حذف ترخيص", f"حذف ترخيص رقم {row['id']}")
+                        st.rerun()
         else:
             st.info("لا يوجد تراخيص")
             
@@ -399,6 +503,10 @@ def owner_portal():
                             pass
                     else:
                         st.info("لا توجد لوحة مرفقة لهذا الرسم.")
+                    if st.button("🗑️ حذف الرسم الهندسي", key=f"del_drw_own_{row['id']}"):
+                        db_execute("DELETE FROM ProjectDrawings WHERE id=%s", (row['id'],))
+                        log_event("حذف رسم هندسي", f"حذف رسم رقم {row['id']}")
+                        st.rerun()
         else:
             st.info("لا يوجد رسومات")
         conn.close()
@@ -427,6 +535,10 @@ def owner_portal():
                                 st.download_button("📥 تحميل المستخلص (PDF)", data=dec, file_name=f"{row['extract_name']}_extract.pdf", mime="application/octet-stream", key=f"dl_trk_ext_{row['id']}")
                             except:
                                 pass
+                        if st.button("🗑️ حذف المستخلص", key=f"del_ext_own_{row['id']}"):
+                            db_execute("DELETE FROM Extracts WHERE id=%s", (row['id'],))
+                            log_event("حذف مستخلص", f"حذف مستخلص رقم {row['id']}")
+                            st.rerun()
             else:
                 st.info("لا يوجد مستخلصات مسجلة لهذا المشروع حتى الآن.")
         except:
@@ -455,10 +567,16 @@ def hr_portal():
     balance = emp_info[2]
     
     render_sidebar("موارد بشرية (HR)")
-    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📝 تقارير الحضور والانصراف للشركة"], horizontal=True)
+    nav = st.radio(
+        "القائمة:", 
+        ["👤 لوحتي الشخصية", "🌴 إدارة أرصدة الإجازات السنوية", "📝 تقارير الحضور والانصراف للشركة"], 
+        horizontal=True
+    )
     st.divider()
     
-    if nav == "📝 تقارير الحضور والانصراف للشركة":
+    if nav == "🌴 إدارة أرصدة الإجازات السنوية":
+        render_leave_balance_management()
+    elif nav == "📝 تقارير الحضور والانصراف للشركة":
         render_attendance_report()
     elif nav == "👤 لوحتي الشخصية":
         render_employee_dashboard(emp_id, balance)
@@ -471,7 +589,11 @@ def admin_manager_portal():
     render_sidebar("المدير الإداري")
     render_smart_alerts()
     
-    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📊 لوحة القيادة", "✅ طلبات الموظفين", "📋 إسناد مهام", "📄 إدارة المستخلصات", "📝 تقارير الحضور"], horizontal=True)
+    nav = st.radio(
+        "القائمة:", 
+        ["👤 لوحتي الشخصية", "📊 لوحة القيادة", "✅ طلبات الموظفين", "🛡️ إعفاء التقرير اليومي", "📋 إسناد مهام", "📄 إدارة المستخلصات", "📝 تقارير الحضور"], 
+        horizontal=True
+    )
     st.divider()
     
     if nav == "📊 لوحة القيادة":
@@ -486,18 +608,22 @@ def admin_manager_portal():
             st.success("لا توجد طلبات معلقة في الشركة حالياً.")
         else:
             for _, row in reqs.iterrows():
-                with st.expander(f"طلب من: {row['name']} (القسم: {row['department']}) - نوع الطلب: {row['req_type']}"):
+                with st.expander(f"طلب من: {row['name']} (القسم: {row['department']}) - نوع الطلب: {row['req_type']} - التاريخ: {row['date']}"):
                     st.write(f"**الملاحظات:** {row['notes']}")
                     c1, c2 = st.columns(2)
                     if c1.button("موافقة واعتماد", key=f"app_{row['id']}", type="primary"):
                         db_execute("UPDATE Requests SET status='مقبول' WHERE id=%s", (row['id'],))
                         db_execute("INSERT INTO Permissions VALUES (%s, %s, %s)", (row['emp_id'], row['date'], row['req_type']))
-                        log_event("اعتماد طلب موظف", f"طلب رقم {row['id']} للموظف {row['name']}")
+                        if row['req_type'] == "إجازة":
+                            db_execute("UPDATE Employees SET annual_balance = GREATEST(0, COALESCE(annual_balance, 21) - 1) WHERE emp_id=%s", (row['emp_id'],))
+                        log_event("اعتماد طلب موظف", f"طلب رقم {row['id']} ({row['req_type']}) للموظف {row['name']}")
                         st.rerun()
                     if c2.button("رفض الطلب", key=f"rej_{row['id']}"):
                         db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],))
                         log_event("رفض طلب موظف", f"طلب رقم {row['id']} للموظف {row['name']}")
                         st.rerun()
+    elif nav == "🛡️ إعفاء التقرير اليومي":
+        render_department_exemption_manager("الكل")
     elif nav == "📋 إسناد مهام":
         render_task_delegation("الكل")
     elif nav == "📄 إدارة المستخلصات":
@@ -528,7 +654,7 @@ def manager_portal():
         balance = 21
         
     render_sidebar("رئيس قسم")
-    nav_options = ["👤 لوحتي الشخصية", "✅ طلبات القسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم"]
+    nav_options = ["👤 لوحتي الشخصية", "✅ طلبات القسم", "🛡️ إعفاء التقرير اليومي للقسم", "📋 إسناد مهام للقسم", "📝 تقارير دوام القسم"]
     
     if "مهندسين إدارة وتخطيط" in [emp_dept, sec_dept]:
         nav_options.append("📄 مراجعة المستخلصات")
@@ -548,17 +674,22 @@ def manager_portal():
             st.success("لا توجد طلبات معلقة لفريقك حالياً.")
         else:
             for _, row in reqs.iterrows():
-                with st.expander(f"طلب من: {row['name']} - {row['req_type']}"):
+                with st.expander(f"طلب من: {row['name']} - {row['req_type']} ({row['date']})"):
+                    st.write(f"**الملاحظات:** {row['notes']}")
                     c1, c2 = st.columns(2)
                     if c1.button("موافقة", key=f"app_{row['id']}", type="primary"):
                         db_execute("UPDATE Requests SET status='مقبول' WHERE id=%s", (row['id'],))
                         db_execute("INSERT INTO Permissions VALUES (%s, %s, %s)", (row['emp_id'], row['date'], row['req_type']))
-                        log_event("موافقة رئيس قسم على طلب", f"طلب رقم {row['id']} للموظف {row['name']}")
+                        if row['req_type'] == "إجازة":
+                            db_execute("UPDATE Employees SET annual_balance = GREATEST(0, COALESCE(annual_balance, 21) - 1) WHERE emp_id=%s", (row['emp_id'],))
+                        log_event("موافقة رئيس قسم على طلب", f"طلب رقم {row['id']} ({row['req_type']}) للموظف {row['name']}")
                         st.rerun()
                     if c2.button("رفض", key=f"rej_{row['id']}"):
                         db_execute("UPDATE Requests SET status='مرفوض' WHERE id=%s", (row['id'],))
                         log_event("رفض رئيس قسم لطلب", f"طلب رقم {row['id']} للموظف {row['name']}")
                         st.rerun()
+    elif nav == "🛡️ إعفاء التقرير اليومي للقسم":
+        render_department_exemption_manager(emp_dept)
     elif nav == "📋 إسناد مهام للقسم":
         render_task_delegation(emp_dept)
     elif nav == "📝 تقارير دوام القسم":
@@ -616,11 +747,20 @@ def licensing_portal():
                 st.success("تم التسجيل ورفع المستند بنجاح!")
                 
         conn = get_db_connection()
-        df = pd.read_sql_query("SELECT project_name, license_name, due_date, status FROM ProjectLicenses", conn)
+        df = pd.read_sql_query("SELECT id, project_name, license_name, due_date, status FROM ProjectLicenses ORDER BY id DESC", conn)
         conn.close()
         
         if not df.empty:
-            st.dataframe(df.rename(columns={'project_name':'المشروع','license_name':'الترخيص','due_date':'تاريخ الانتهاء','status':'الحالة'}), hide_index=True)
+            with st.expander("🗑️ حذف ترخيص مسجل بالخطأ"):
+                lc1, lc2 = st.columns([3, 1])
+                l_opts = df['id'].astype(str) + " - " + df['license_name'].fillna('') + " (" + df['project_name'].fillna('') + ")"
+                sel_l_del = lc1.selectbox("اختر الترخيص:", l_opts)
+                if lc2.button("حذف الترخيص 🗑️"):
+                    l_id_del = int(sel_l_del.split(" - ")[0])
+                    db_execute("DELETE FROM ProjectLicenses WHERE id=%s", (l_id_del,))
+                    log_event("حذف ترخيص", f"حذف ترخيص رقم {l_id_del}")
+                    st.rerun()
+            st.dataframe(df.drop(columns=['id']).rename(columns={'project_name':'المشروع','license_name':'الترخيص','due_date':'تاريخ الانتهاء','status':'الحالة'}), hide_index=True, use_container_width=True)
     else:
         render_employee_dashboard(emp_id, balance)
 
@@ -648,11 +788,20 @@ def engineer_portal():
                 st.success("تم التسجيل ورفع اللوحة بنجاح!")
                 
         conn = get_db_connection()
-        df = pd.read_sql_query("SELECT project_name, drawing_name, due_date, status FROM ProjectDrawings", conn)
+        df = pd.read_sql_query("SELECT id, project_name, drawing_name, due_date, status FROM ProjectDrawings ORDER BY id DESC", conn)
         conn.close()
         
         if not df.empty:
-            st.dataframe(df.rename(columns={'project_name':'المشروع','drawing_name':'اسم الرسم','due_date':'تاريخ التسليم','status':'الحالة'}), hide_index=True)
+            with st.expander("🗑️ حذف رسم هندسي مسجل بالخطأ"):
+                dc1, dc2 = st.columns([3, 1])
+                d_opts = df['id'].astype(str) + " - " + df['drawing_name'].fillna('') + " (" + df['project_name'].fillna('') + ")"
+                sel_d_del = dc1.selectbox("اختر الرسم:", d_opts)
+                if dc2.button("حذف الرسم 🗑️"):
+                    d_id_del = int(sel_d_del.split(" - ")[0])
+                    db_execute("DELETE FROM ProjectDrawings WHERE id=%s", (d_id_del,))
+                    log_event("حذف رسم هندسي", f"حذف رسم رقم {d_id_del}")
+                    st.rerun()
+            st.dataframe(df.drop(columns=['id']).rename(columns={'project_name':'المشروع','drawing_name':'اسم الرسم','due_date':'تاريخ التسليم','status':'الحالة'}), hide_index=True, use_container_width=True)
     else:
         render_employee_dashboard(emp_id, balance)
 
@@ -697,7 +846,7 @@ def extracts_engineer_portal():
                         
                         if row['status'] in ['قيد التجهيز', 'مرفوض فنياً', 'مطلوب تعديلات']:
                             new_imped = st.text_input("تحديث المعوقات أو النواقص:", value=row['impediment_notes'] if pd.notna(row['impediment_notes']) else "", key=f"imp_{row['id']}")
-                            col1, col2 = st.columns(2)
+                            col1, col2, col3 = st.columns(3)
                             
                             if col1.button("تحديث النواقص 📝", key=f"upd_{row['id']}"):
                                 db_execute("UPDATE Extracts SET impediment_notes=%s WHERE id=%s", (new_imped, row['id']))
@@ -707,6 +856,11 @@ def extracts_engineer_portal():
                             if col2.button("🚀 إصدار المستخلص (إرسال للتخطيط)", key=f"iss_{row['id']}", type="primary"):
                                 db_execute("UPDATE Extracts SET status='بانتظار اعتماد التخطيط', impediment_notes='تم الإنجاز - بانتظار الاعتماد' WHERE id=%s", (row['id'],))
                                 log_event("إصدار مستخلص للتخطيط", f"مستخلص: {row['extract_name']} - مشروع: {row['project_name']}")
+                                st.rerun()
+                                
+                            if col3.button("🗑️ حذف المستخلص", key=f"del_my_ext_{row['id']}"):
+                                db_execute("DELETE FROM Extracts WHERE id=%s", (row['id'],))
+                                log_event("حذف مسودة مستخلص", f"حذف المستخلص رقم {row['id']}")
                                 st.rerun()
                         else:
                             st.info("تم إصدار هذا المستخلص ولم يعد في عهدتك.")
@@ -780,6 +934,10 @@ def legal_portal():
                             st.download_button("📥 تحميل / عرض العقد", data=dec, file_name=f"Contract_{row['unit_code']}.pdf", mime="application/octet-stream", key=f"dl_contract_{row['id']}")
                         except:
                             pass
+                        if st.button("🗑️ مسح ملف العقد من الوحدة", key=f"del_cont_{row['id']}"):
+                            db_execute("UPDATE RealEstateUnits SET contract_file='' WHERE id=%s", (row['id'],))
+                            log_event("حذف ملف عقد", f"وحدة: {row['unit_code']}")
+                            st.rerun()
         if not has_archived:
             st.info("لا توجد عقود مؤرشفة في النظام.")
         conn.close()
@@ -821,6 +979,16 @@ def legal_portal():
         chq_df = pd.read_sql_query("SELECT id, unit_code, client_name, cheque_number, amount, due_date, status, file_data FROM Cheques ORDER BY due_date ASC", conn)
         
         if not chq_df.empty:
+            with st.expander("🗑️ حذف شيك مسجل بالخطأ"):
+                cc1, cc2 = st.columns([3, 1])
+                c_opts = chq_df['id'].astype(str) + " - شيك رقم: " + chq_df['cheque_number'].fillna('') + " (العميل: " + chq_df['client_name'].fillna('') + ")"
+                sel_c_del = cc1.selectbox("اختر الشيك:", c_opts)
+                if cc2.button("حذف الشيك 🗑️"):
+                    c_id_del = int(sel_c_del.split(" - ")[0])
+                    db_execute("DELETE FROM Cheques WHERE id=%s", (c_id_del,))
+                    log_event("حذف شيك بنكي", f"حذف شيك رقم {c_id_del}")
+                    st.rerun()
+                    
             display_df = chq_df.drop(columns=['id', 'file_data'])
             display_df.columns = ['رقم الوحدة', 'العميل', 'رقم الشيك', 'القيمة', 'تاريخ الاستحقاق', 'الحالة']
             st.dataframe(display_df, use_container_width=True, hide_index=True)
