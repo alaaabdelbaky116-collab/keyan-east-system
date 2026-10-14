@@ -3,10 +3,10 @@ import pandas as pd
 from datetime import datetime
 import base64
 import os
-import io
 import psycopg2
 import pytz
 import math
+import io
 
 # ==========================================
 # 1. الثوابت والقوائم الأساسية للنظام
@@ -480,8 +480,68 @@ def process_excel(file):
     return pd.DataFrame(extracted_data)
 
 # ==========================================
-# 5. مولد ملف العرض التقديمي (Microsoft PowerPoint .pptx)
+# 5. مولد العرض التقديمي (PowerPoint .pptx أو شرائح تفاعلية)
 # ==========================================
+PRESENTATION_SLIDES_DATA = [
+    ("منظومة كيان الشرقية الرقمية (ERP)", [
+        "شركة كيان الشرقية للمقاولات والاستثمار العقاري - الزقازيق",
+        "دليل التدريب والتشغيل الشامل لجميع الإدارات والموظفين",
+        "بيئة عمل إلكترونية متكاملة بدون ورق تربط المقر بالمواقع الهندسية",
+        "إعداد وإشراف: إدارة تكنولوجيا المعلومات (IT Department)"
+    ]),
+    ("1. تسجيل الدخول وتأمين الحساب (لجميع الموظفين)", [
+        "الدخول عبر الرابط الرسمي باستخدام اسم المستخدم وكلمة المرور المسلمة من الـ IT",
+        "تغيير كلمة المرور: من القائمة الجانبية -> تغيير كلمة المرور الخاصة بي",
+        "ميزة الصلاحية المزدوجة (Dual Role): التبديل بين قسمين بضغطة زر من القائمة الجانبية",
+        "تسجيل الخروج الآمن بعد انتهاء العمل للحفاظ على سرية البيانات"
+    ]),
+    ("2. البصمة الذكية والتقرير اليومي (الروتين اليومي)", [
+        "تفتح شاشة (لوحتي الشخصية) تلقائياً فور تسجيل الدخول لتسهيل البصمة الصباحية",
+        "شروط البصمة: السماح للمتصفح بالـ GPS والكاميرا والتواجد داخل نطاق الموقع أو المقر",
+        "تنبيه التأخير: يظهر تحذير تلقائي في حال عدم تسجيل الحضور قبل الساعة 11:30 صباحاً",
+        "بصمة الانصراف: اختيار المشروع وكتابة التقرير اليومي ثم التقاط الصورة وتسجيل الانصراف",
+        "المهام المسندة: تظهر أعلى الشاشة لكتابة تقرير إنجازها وإغلاقها مباشرة"
+    ]),
+    ("3. الإجازات السنوية وصلاحيات رؤساء الأقسام والـ HR", [
+        "رصيد الإجازات السنوي يظهر أعلى شاشة الموظف طوال العام ويُخصم آلياً عند اعتماد الإجازة",
+        "يمكن للموظف إلغاء طلبه والتراجع عنه طالما لا يزال في حالة (قيد الانتظار)",
+        "صلاحية الـ HR: تخصيص وتعديل رصيد الإجازات المتبقي لكل موظف خلال السنة",
+        "صلاحية رئيس القسم: اعتماد طلبات فريقه + إسناد المهام + متابعة تقارير حضور القسم",
+        "إعفاء التقرير اليومي: يمتلك رئيس القسم صلاحية إعفاء أي موظف في قسمه من تقرير الانصراف"
+    ]),
+    ("4. الدورة الهندسية (المستخلصات، الرسومات، والتراخيص)", [
+        "المرحلة 1 (مهندس المستخلصات): إنشاء المسودة ورفع الـ PDF وتسجيل المعوقات ثم الإصدار للتخطيط",
+        "المرحلة 2 (مهندس التخطيط): المراجعة الفنية للمستخلص واعتماده لتحويله للحسابات أو إرجاعه",
+        "المرحلة 3 (الحسابات): صرف المستخلص المعتمد وتحديث حالته إلى (تم الصرف)",
+        "رادار المالك: يوضح للمالك في أي إدارة يتوقف المستخلص حالياً لمنع أي تعطيل",
+        "خزنة الهندسة والتراخيص: رفع اللوحات والتراخيص مع تنبيه ذكي قبل انتهاء الترخيص بـ 15 يوماً"
+    ]),
+    ("5. المبيعات وخدمة العملاء (CRM) وكشف الحساب", [
+        "سجل العملاء: تسجيل بيانات العميل الكاملة (الاسم، الهاتف، الرقم القومي، العنوان)",
+        "تسكين الوحدات: إضافة الوحدات العقارية وتحديد حالتها (متاحة / مباعة / محجوزة) وربطها بالعميل",
+        "جدولة الأقساط: إدخال جدول أقساط العميل بمواعيد استحقاقها لمتابعة التحصيل",
+        "التقييم الآلي للعميل: يحسب النظام نسبة التزام العميل (عميل VIP ملتزم / التزام جيد / متعثر)",
+        "كشف حساب رسمي (PDF): طباعة وتصدير كشف حساب مفصل لأي عميل بلوجو الشركة"
+    ]),
+    ("6. دورة تصعيد المتأخرات (خدمة العملاء -> القانونية -> المالك)", [
+        "الخطوة 1 (خدمة العملاء): تسجيل (المكالمة الأولى) ثم (المكالمة الثانية) مع العميل المتأخر",
+        "الخطوة 2 (التحويل للقانونية): في حال عدم السداد تضغط خدمة العملاء (تحويل للشؤون القانونية)",
+        "الخطوة 3 (الشؤون القانونية): تسجيل (مكالمة الإنذار القانوني) مع العميل المتأخر",
+        "الخطوة 4 (التصعيد للمالك): عند عدم الاستجابة يتم تصعيد الملف للوحة المالك للتدخل النهائي"
+    ]),
+    ("7. موديول إعادة تقييم وإعادة بيع الوحدات (Resale)", [
+        "تقديم طلب (إعادة تقييم وإعادة بيع وحدة) بواسطة المبيعات أو الشؤون القانونية بالسعر المقترح الجديد",
+        "مراجعة المالك للسعر السابق والسعر التقييمي الجديد وأسباب إعادة البيع",
+        "بمجرد موافقة المالك: تتحول الوحدة آلياً إلى (متاحة) بالسعر الجديد وتُلغى أقساط العميل السابق"
+    ]),
+    ("8. الشؤون القانونية والحسابات والمالية", [
+        "الشؤون القانونية: أرشفة العقود الموقعة (Scanned PDF) + إدارة محفظة الشيكات البنكية وصورها",
+        "قسم الحسابات (1 - أقساط الجهاز): شاشة مستقلة لجدولة ومتابعة أقساط الأراضي والهيئة",
+        "قسم الحسابات (2 - أقساط التنفيذ ومساهمات الملاك): تسجيل حصة ونسبة كل مالك مساهم ومتابعة سداده",
+        "التراجع والحذف: إمكانية حذف أي بيان أُدخل بالخطأ من داخل كل قسم، مع مركز تصفير شامل للأدمن"
+    ])
+]
+
 def generate_pptx_file():
     try:
         from pptx import Presentation
@@ -489,124 +549,125 @@ def generate_pptx_file():
         from pptx.dml.color import RGBColor
         from pptx.enum.text import PP_ALIGN
         from pptx.enum.shapes import MSO_SHAPE
-    except ImportError:
+
+        prs = Presentation()
+        prs.slide_width = Inches(13.333)
+        prs.slide_height = Inches(7.5)
+
+        for idx, (title_text, bullets) in enumerate(PRESENTATION_SLIDES_DATA):
+            slide = prs.slides.add_slide(prs.slide_layouts[6])
+            bg = slide.background
+            fill = bg.fill
+            fill.solid()
+            fill.fore_color.rgb = RGBColor(11, 23, 42)
+            
+            top_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(13.333), Inches(0.15))
+            top_bar.fill.solid()
+            top_bar.fill.fore_color.rgb = RGBColor(212, 175, 55)
+            top_bar.line.fill.background()
+
+            if os.path.exists(LOGO_FILE):
+                try:
+                    slide.shapes.add_picture(LOGO_FILE, Inches(0.6), Inches(0.4), height=Inches(0.9))
+                except:
+                    pass
+
+            title_box = slide.shapes.add_textbox(Inches(2.2), Inches(0.4), Inches(10.5), Inches(1.1))
+            tf_title = title_box.text_frame
+            tf_title.word_wrap = True
+            p_title = tf_title.paragraphs[0]
+            p_title.text = title_text
+            p_title.font.name = "Arial"
+            p_title.font.size = Pt(32)
+            p_title.font.bold = True
+            p_title.font.color.rgb = RGBColor(212, 175, 55)
+            p_title.alignment = PP_ALIGN.RIGHT
+
+            card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.8), Inches(1.7), Inches(11.733), Inches(5.1))
+            card.fill.solid()
+            card.fill.fore_color.rgb = RGBColor(20, 38, 66)
+            card.line.color.rgb = RGBColor(212, 175, 55)
+            card.line.width = Pt(1.5)
+
+            body_box = slide.shapes.add_textbox(Inches(1.1), Inches(2.0), Inches(11.1), Inches(4.5))
+            tf_body = body_box.text_frame
+            tf_body.word_wrap = True
+
+            for i, b_text in enumerate(bullets):
+                p = tf_body.paragraphs[0] if i == 0 else tf_body.add_paragraph()
+                p.text = f"•  {b_text}"
+                p.font.name = "Arial"
+                p.font.size = Pt(22)
+                p.font.bold = (idx == 0)
+                p.font.color.rgb = RGBColor(255, 255, 255)
+                p.space_after = Pt(16)
+                p.alignment = PP_ALIGN.RIGHT
+
+        pptx_io = io.BytesIO()
+        prs.save(pptx_io)
+        pptx_io.seek(0)
+        return pptx_io.getvalue()
+    except Exception:
         return None
 
-    prs = Presentation()
-    prs.slide_width = Inches(13.333)
-    prs.slide_height = Inches(7.5)
-
-    slides_data = [
-        ("منظومة كيان الشرقية الرقمية (ERP)", [
-            "شركة كيان الشرقية للمقاولات والاستثمار العقاري - الزقازيق",
-            "دليل التدريب والتشغيل الشامل لجميع الإدارات والموظفين",
-            "بيئة عمل إلكترونية متكاملة بدون ورق تربط المقر بالمواقع الهندسية",
-            "إعداد وإشراف: إدارة تكنولوجيا المعلومات (IT Department)"
-        ]),
-        ("1. تسجيل الدخول وتأمين الحساب (لجميع الموظفين)", [
-            "الدخول عبر الرابط الرسمي باستخدام اسم المستخدم وكلمة المرور المسلمة من الـ IT",
-            "تغيير كلمة المرور: من القائمة الجانبية -> تغيير كلمة المرور الخاصة بي",
-            "ميزة الصلاحية المزدوجة (Dual Role): التبديل بين قسمين بضغطة زر من القائمة الجانبية",
-            "تسجيل الخروج الآمن بعد انتهاء العمل للحفاظ على سرية البيانات"
-        ]),
-        ("2. البصمة الذكية والتقرير اليومي (الروتين اليومي)", [
-            "تفتح شاشة (لوحتي الشخصية) تلقائياً فور تسجيل الدخول لتسهيل البصمة الصباحية",
-            "شروط البصمة: السماح للمتصفح بالـ GPS والكاميرا والتواجد داخل نطاق الموقع أو المقر",
-            "تنبيه التأخير: يظهر تحذير تلقائي في حال عدم تسجيل الحضور قبل الساعة 11:30 صباحاً",
-            "بصمة الانصراف: اختيار المشروع وكتابة التقرير اليومي ثم التقاط الصورة وتسجيل الانصراف",
-            "المهام المسندة: تظهر أعلى الشاشة لكتابة تقرير إنجازها وإغلاقها مباشرة"
-        ]),
-        ("3. الإجازات السنوية وصلاحيات رؤساء الأقسام والـ HR", [
-            "رصيد الإجازات السنوي يظهر أعلى شاشة الموظف طوال العام ويُخصم آلياً عند اعتماد الإجازة",
-            "يمكن للموظف إلغاء طلبه والتراجع عنه طالما لا يزال في حالة (قيد الانتظار)",
-            "صلاحية الـ HR: تخصيص وتعديل رصيد الإجازات المتبقي لكل موظف خلال السنة",
-            "صلاحية رئيس القسم: اعتماد طلبات فريقه + إسناد المهام + متابعة تقارير حضور القسم",
-            "إعفاء التقرير اليومي: يمتلك رئيس القسم صلاحية إعفاء أي موظف في قسمه من تقرير الانصراف"
-        ]),
-        ("4. الدورة الهندسية (المستخلصات، الرسومات، والتراخيص)", [
-            "المرحلة 1 (مهندس المستخلصات): إنشاء المسودة ورفع الـ PDF وتسجيل المعوقات ثم الإصدار للتخطيط",
-            "المرحلة 2 (مهندس التخطيط): المراجعة الفنية للمستخلص واعتماده لتحويله للحسابات أو إرجاعه",
-            "المرحلة 3 (الحسابات): صرف المستخلص المعتمد وتحديث حالته إلى (تم الصرف)",
-            "رادار المالك: يوضح للمالك في أي إدارة يتوقف المستخلص حالياً لمنع أي تعطيل",
-            "خزنة الهندسة والتراخيص: رفع اللوحات والتراخيص مع تنبيه ذكي قبل انتهاء الترخيص بـ 15 يوماً"
-        ]),
-        ("5. المبيعات وخدمة العملاء (CRM) وكشف الحساب", [
-            "سجل العملاء: تسجيل بيانات العميل الكاملة (الاسم، الهاتف، الرقم القومي، العنوان)",
-            "تسكين الوحدات: إضافة الوحدات العقارية وتحديد حالتها (متاحة / مباعة / محجوزة) وربطها بالعميل",
-            "جدولة الأقساط: إدخال جدول أقساط العميل بمواعيد استحقاقها لمتابعة التحصيل",
-            "التقييم الآلي للعميل: يحسب النظام نسبة التزام العميل (عميل VIP ملتزم / التزام جيد / متعثر)",
-            "كشف حساب رسمي (PDF): طباعة وتصدير كشف حساب مفصل لأي عميل بلوجو الشركة"
-        ]),
-        ("6. دورة تصعيد المتأخرات (خدمة العملاء -> القانونية -> المالك)", [
-            "الخطوة 1 (خدمة العملاء): تسجيل (المكالمة الأولى) ثم (المكالمة الثانية) مع العميل المتأخر",
-            "الخطوة 2 (التحويل للقانونية): في حال عدم السداد تضغط خدمة العملاء (تحويل للشؤون القانونية)",
-            "الخطوة 3 (الشؤون القانونية): تسجيل (مكالمة الإنذار القانوني) مع العميل المتأخر",
-            "الخطوة 4 (التصعيد للمالك): عند عدم الاستجابة يتم تصعيد الملف للوحة المالك للتدخل النهائي"
-        ]),
-        ("7. موديول إعادة تقييم وإعادة بيع الوحدات (Resale)", [
-            "تقديم طلب (إعادة تقييم وإعادة بيع وحدة) بواسطة المبيعات أو الشؤون القانونية بالسعر المقترح الجديد",
-            "مراجعة المالك للسعر السابق والسعر التقييمي الجديد وأسباب إعادة البيع",
-            "بمجرد موافقة المالك: تتحول الوحدة آلياً إلى (متاحة) بالسعر الجديد وتُلغى أقساط العميل السابق"
-        ]),
-        ("8. الشؤون القانونية والحسابات والمالية", [
-            "الشؤون القانونية: أرشفة العقود الموقعة (Scanned PDF) + إدارة محفظة الشيكات البنكية وصورها",
-            "قسم الحسابات (1 - أقساط الجهاز): شاشة مستقلة لجدولة ومتابعة أقساط الأراضي والهيئة",
-            "قسم الحسابات (2 - أقساط التنفيذ ومساهمات الملاك): تسجيل حصة ونسبة كل مالك مساهم ومتابعة سداده",
-            "التراجع والحذف: إمكانية حذف أي بيان أُدخل بالخطأ من داخل كل قسم، مع مركز تصفير شامل للأدمن"
-        ])
-    ]
-
-    for idx, (title_text, bullets) in enumerate(slides_data):
-        slide = prs.slides.add_slide(prs.slide_layouts[6])
-        
-        bg = slide.background
-        fill = bg.fill
-        fill.solid()
-        fill.fore_color.rgb = RGBColor(11, 23, 42)
-        
-        top_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(13.333), Inches(0.15))
-        top_bar.fill.solid()
-        top_bar.fill.fore_color.rgb = RGBColor(212, 175, 55)
-        top_bar.line.fill.background()
-
-        if os.path.exists(LOGO_FILE):
-            try:
-                slide.shapes.add_picture(LOGO_FILE, Inches(0.6), Inches(0.4), height=Inches(0.9))
-            except:
-                pass
-
-        title_box = slide.shapes.add_textbox(Inches(2.2), Inches(0.4), Inches(10.5), Inches(1.1))
-        tf_title = title_box.text_frame
-        tf_title.word_wrap = True
-        p_title = tf_title.paragraphs[0]
-        p_title.text = title_text
-        p_title.font.name = "Arial"
-        p_title.font.size = Pt(32)
-        p_title.font.bold = True
-        p_title.font.color.rgb = RGBColor(212, 175, 55)
-        p_title.alignment = PP_ALIGN.RIGHT
-
-        card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.8), Inches(1.7), Inches(11.733), Inches(5.1))
-        card.fill.solid()
-        card.fill.fore_color.rgb = RGBColor(20, 38, 66)
-        card.line.color.rgb = RGBColor(212, 175, 55)
-        card.line.width = Pt(1.5)
-
-        body_box = slide.shapes.add_textbox(Inches(1.1), Inches(2.0), Inches(11.1), Inches(4.5))
-        tf_body = body_box.text_frame
-        tf_body.word_wrap = True
-
-        for i, b_text in enumerate(bullets):
-            p = tf_body.paragraphs[0] if i == 0 else tf_body.add_paragraph()
-            p.text = f"•  {b_text}"
-            p.font.name = "Arial"
-            p.font.size = Pt(22)
-            p.font.bold = (idx == 0)
-            p.font.color.rgb = RGBColor(255, 255, 255)
-            p.space_after = Pt(16)
-            p.alignment = PP_ALIGN.RIGHT
-
-    pptx_io = io.BytesIO()
-    prs.save(pptx_io)
-    pptx_io.seek(0)
-    return pptx_io.getvalue()
+def generate_interactive_presentation_html():
+    logo_b64 = get_base64_image(LOGO_FILE)
+    logo_tag = f'<img src="data:image/png;base64,{logo_b64}" style="height:70px;">' if logo_b64 else ''
+    slides_html = ""
+    for idx, (title_text, bullets) in enumerate(PRESENTATION_SLIDES_DATA):
+        active_cls = "active" if idx == 0 else ""
+        items_html = "".join([f"<li>{b}</li>" for b in bullets])
+        slides_html += f"""
+        <div class="slide {active_cls}">
+            <div class="header-bar"></div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div class="slide-badge">شريحة {idx + 1} من {len(PRESENTATION_SLIDES_DATA)} - دليل تشغيل نظام كيان الشرقية ERP</div>
+                <div>{logo_tag}</div>
+            </div>
+            <h2>{title_text}</h2>
+            <div class="card"><ul>{items_html}</ul></div>
+        </div>
+        """
+    return f"""<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<title>العرض التقديمي لنظام كيان الشرقية ERP</title>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+* {{ box-sizing: border-box; font-family: 'Tajawal', sans-serif; }}
+body {{ margin: 0; background: #0b172a; color: #fff; overflow: hidden; }}
+.slide {{ display: none; width: 100vw; height: 100vh; padding: 50px 80px; flex-direction: column; justify-content: center; position: relative; background: radial-gradient(circle at center, #162a4a 0%, #0b172a 100%); }}
+.slide.active {{ display: flex; }}
+.header-bar {{ position: absolute; top: 0; right: 0; left: 0; height: 8px; background: #D4AF37; }}
+.slide-badge {{ color: #D4AF37; font-size: 20px; font-weight: 700; margin-bottom: 10px; }}
+h2 {{ font-size: 38px; color: #D4AF37; margin: 10px 0 25px 0; font-weight: 900; border-bottom: 2px solid rgba(212,175,55,0.3); padding-bottom: 12px; }}
+.card {{ background: rgba(255,255,255,0.06); border: 1px solid #D4AF37; border-radius: 14px; padding: 30px; }}
+ul {{ font-size: 25px; line-height: 1.9; color: #f8fafc; margin: 0; padding-right: 25px; }}
+li {{ margin-bottom: 14px; }}
+.controls {{ position: fixed; bottom: 25px; left: 40px; right: 40px; display: flex; justify-content: space-between; align-items: center; z-index: 100; }}
+.btn {{ background: #D4AF37; color: #0b172a; border: none; padding: 12px 28px; font-size: 18px; font-weight: 800; border-radius: 8px; cursor: pointer; }}
+</style>
+</head>
+<body>
+{slides_html}
+<div class="controls">
+    <button class="btn" onclick="changeSlide(-1)">⏮️ الشريحة السابقة</button>
+    <button class="btn" onclick="window.print()">🖨️ طباعة كـ PDF</button>
+    <button class="btn" onclick="changeSlide(1)">الشريحة التالية ⏭️</button>
+</div>
+<script>
+let current = 0;
+const slides = document.querySelectorAll('.slide');
+function changeSlide(dir) {{
+    slides[current].classList.remove('active');
+    current = (current + dir + slides.length) % slides.length;
+    slides[current].classList.add('active');
+}}
+document.addEventListener('keydown', (e) => {{
+    if (e.key === 'ArrowLeft') changeSlide(1);
+    if (e.key === 'ArrowRight') changeSlide(-1);
+}});
+</script>
+</body>
+</html>"""
