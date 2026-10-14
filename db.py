@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 import base64
 import os
+import io
 import psycopg2
 import pytz
 import math
@@ -477,13 +478,19 @@ def process_excel(file):
     conn.close()
     log_event("تحليل شيت بصمة", f"تم تحليل ملف إكسيل لعدد {len(extracted_data)} موظف")
     return pd.DataFrame(extracted_data)
-    def generate_pptx_file():
-    import io
-    from pptx import Presentation
-    from pptx.util import Inches, Pt
-    from pptx.dml.color import RGBColor
-    from pptx.enum.text import PP_ALIGN
-    from pptx.enum.shapes import MSO_SHAPE
+
+# ==========================================
+# 5. مولد ملف العرض التقديمي (Microsoft PowerPoint .pptx)
+# ==========================================
+def generate_pptx_file():
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.enum.shapes import MSO_SHAPE
+    except ImportError:
+        return None
 
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -552,26 +559,22 @@ def process_excel(file):
     for idx, (title_text, bullets) in enumerate(slides_data):
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         
-        # خلفية كحلي داكن
         bg = slide.background
         fill = bg.fill
         fill.solid()
         fill.fore_color.rgb = RGBColor(11, 23, 42)
         
-        # شريط ذهبي علوي
         top_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(13.333), Inches(0.15))
         top_bar.fill.solid()
         top_bar.fill.fore_color.rgb = RGBColor(212, 175, 55)
         top_bar.line.fill.background()
 
-        # إضافة لوجو الشركة إن وجد
         if os.path.exists(LOGO_FILE):
             try:
                 slide.shapes.add_picture(LOGO_FILE, Inches(0.6), Inches(0.4), height=Inches(0.9))
             except:
                 pass
 
-        # صندوق العنوان
         title_box = slide.shapes.add_textbox(Inches(2.2), Inches(0.4), Inches(10.5), Inches(1.1))
         tf_title = title_box.text_frame
         tf_title.word_wrap = True
@@ -583,14 +586,12 @@ def process_excel(file):
         p_title.font.color.rgb = RGBColor(212, 175, 55)
         p_title.alignment = PP_ALIGN.RIGHT
 
-        # إطار محتوى الشريحة
         card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.8), Inches(1.7), Inches(11.733), Inches(5.1))
         card.fill.solid()
         card.fill.fore_color.rgb = RGBColor(20, 38, 66)
         card.line.color.rgb = RGBColor(212, 175, 55)
         card.line.width = Pt(1.5)
 
-        # النقاط داخل الشريحة
         body_box = slide.shapes.add_textbox(Inches(1.1), Inches(2.0), Inches(11.1), Inches(4.5))
         tf_body = body_box.text_frame
         tf_body.word_wrap = True
