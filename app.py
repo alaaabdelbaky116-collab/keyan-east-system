@@ -23,7 +23,7 @@ if 'logged_in' not in st.session_state:
 
 apply_custom_theme()
 set_dynamic_background()
-setup_database_v4()
+setup_database_v5()
 
 # ==========================================
 # 1. شاشة تسجيل الدخول
@@ -130,7 +130,8 @@ def admin_portal():
             table_map = {
                 "العملاء (Clients)": ("Clients", "id", "SELECT id, name, phone, address FROM Clients ORDER BY id DESC"),
                 "الوحدات العقارية (RealEstateUnits)": ("RealEstateUnits", "id", "SELECT id, project_name, unit_code, status, client_name, total_price FROM RealEstateUnits ORDER BY id DESC"),
-                "أقساط العملاء (UnitInstallments)": ("UnitInstallments", "id", "SELECT id, unit_code, client_name, amount, due_date, status FROM UnitInstallments ORDER BY id DESC"),
+                "أقساط العملاء (UnitInstallments)": ("UnitInstallments", "id", "SELECT id, unit_code, client_name, amount, due_date, status, collection_stage FROM UnitInstallments ORDER BY id DESC"),
+                "طلبات إعادة بيع الوحدات (UnitResaleRequests)": ("UnitResaleRequests", "id", "SELECT id, unit_code, project_name, old_client_name, new_evaluated_price, status FROM UnitResaleRequests ORDER BY id DESC"),
                 "الشيكات البنكية (Cheques)": ("Cheques", "id", "SELECT id, unit_code, client_name, cheque_number, amount, due_date, status FROM Cheques ORDER BY id DESC"),
                 "أقساط الجهاز والتنفيذ (ProjectFinancials)": ("ProjectFinancials", "id", "SELECT id, project_name, category, installment_type, shareholder_name, amount, due_date, status FROM ProjectFinancials ORDER BY id DESC"),
                 "المستخلصات الهندسية (Extracts)": ("Extracts", "id", "SELECT id, project_name, extract_name, amount, date, created_by, status FROM Extracts ORDER BY id DESC"),
@@ -170,13 +171,13 @@ def admin_portal():
             st.warning("تنبيه هام: هذه العملية تقوم بمسح جميع البيانات المسجلة في الأقسام المحددة نهائياً لتنظيف السيستم من الداتا التجريبية.")
             
             wipe_options = {
-                "مسح جميع العملاء، الوحدات، الأقساط، والشيكات": ["Clients", "RealEstateUnits", "UnitInstallments", "Cheques"],
+                "مسح جميع العملاء، الوحدات، الأقساط، طلبات إعادة البيع، والشيكات": ["Clients", "RealEstateUnits", "UnitInstallments", "UnitResaleRequests", "Cheques"],
                 "مسح جميع أقساط الجهاز وأقساط التنفيذ ومساهمات الملاك": ["ProjectFinancials"],
                 "مسح جميع المستخلصات والتراخيص والرسومات الهندسية": ["Extracts", "ProjectLicenses", "ProjectDrawings"],
                 "مسح جميع سجلات البصمة، المهام، وطلبات الإجازات": ["WebAttendance", "Tasks", "Requests", "Permissions", "MonthlyStats"],
                 "مسح سجل المراقبة (Audit Logs)": ["AuditLogs"],
                 "🔥 مسح شامل لجميع الداتا والعمليات بالكامل (مع الاحتفاظ بحسابات الأدمن والمالك فقط)": [
-                    "Clients", "RealEstateUnits", "UnitInstallments", "Cheques", 
+                    "Clients", "RealEstateUnits", "UnitInstallments", "UnitResaleRequests", "Cheques", 
                     "ProjectFinancials", "Extracts", "ProjectLicenses", "ProjectDrawings", 
                     "WebAttendance", "Tasks", "Requests", "Permissions", "MonthlyStats", "Locations"
                 ]
@@ -449,7 +450,7 @@ def owner_portal():
     st.title("👑 لوحة تحكم المالك")
     nav = st.radio(
         "القائمة:", 
-        ["📊 لوحة القيادة", "💰 أقساط الجهاز والتنفيذ (المساهمين)", "👥 العملاء وكشف الحساب", "📈 التراخيص والرسومات", "📄 تتبع المستخلصات", "📑 تقارير المهام"], 
+        ["📊 لوحة القيادة", "👥 العملاء والمتأخرات وإعادة البيع", "💰 أقساط الجهاز والتنفيذ (المساهمين)", "📈 التراخيص والرسومات", "📄 تتبع المستخلصات", "📑 تقارير المهام"], 
         horizontal=True
     )
     st.divider()
@@ -460,7 +461,7 @@ def owner_portal():
     elif nav == "💰 أقساط الجهاز والتنفيذ (المساهمين)":
         render_financials_module(can_edit=True)
         
-    elif nav == "👥 العملاء وكشف الحساب":
+    elif nav == "👥 العملاء والمتأخرات وإعادة البيع":
         render_clients_and_crm_module(mode="owner")
         
     elif nav == "📈 التراخيص والرسومات":
@@ -891,10 +892,17 @@ def legal_portal():
     balance = emp_info[2]
     
     render_sidebar("مسؤول الشؤون القانونية والعقود")
-    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "📄 أرشفة العقود الموقعة", "💳 إدارة الشيكات البنكية", "📊 كشف حساب وتقييم عميل"], horizontal=True)
+    nav = st.radio(
+        "القائمة:", 
+        ["👤 لوحتي الشخصية", "🚨 متابعة المتأخرات المحولة وإعادة البيع", "📄 أرشفة العقود الموقعة", "💳 إدارة الشيكات البنكية"], 
+        horizontal=True
+    )
     st.divider()
     
-    if nav == "📄 أرشفة العقود الموقعة":
+    if nav == "🚨 متابعة المتأخرات المحولة وإعادة البيع":
+        render_clients_and_crm_module(mode="legal")
+        
+    elif nav == "📄 أرشفة العقود الموقعة":
         st.header("إرفاق وحفظ العقود الأصلية (Scanned)")
         st.info("اختر الوحدة المباعة من قسم المبيعات لترفع نسختها الموقعة في أرشيف الشركة.")
         conn = get_db_connection()
@@ -1007,8 +1015,6 @@ def legal_portal():
         else:
             st.info("لا توجد شيكات مسجلة.")
         conn.close()
-    elif nav == "📊 كشف حساب وتقييم عميل":
-        render_clients_and_crm_module(mode="owner")
     elif nav == "👤 لوحتي الشخصية":
         render_employee_dashboard(emp_id, balance)
 
@@ -1018,10 +1024,10 @@ def sales_portal():
     balance = emp_info[2]
     
     render_sidebar("المبيعات وخدمة العملاء")
-    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "👥 إدارة العملاء وجدولة الأقساط وكشف الحساب"], horizontal=True)
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "👥 إدارة العملاء والتحصيل وإعادة البيع"], horizontal=True)
     st.divider()
     
-    if nav == "👥 إدارة العملاء وجدولة الأقساط وكشف الحساب":
+    if nav == "👥 إدارة العملاء والتحصيل وإعادة البيع":
         render_clients_and_crm_module(mode="sales")
     else:
         render_employee_dashboard(emp_id, balance)
