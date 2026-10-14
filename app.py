@@ -111,6 +111,9 @@ def db_fetchall(query, params=()):
     conn.close()
     return res
 
+def is_valid_file(val):
+    return pd.notna(val) and isinstance(val, str) and len(val.strip()) > 10
+
 def log_event(action_type, details=""):
     try:
         user = st.session_state.get('username') or 'غير مسجل'
@@ -124,10 +127,10 @@ def log_event(action_type, details=""):
         pass
 
 # ==========================================
-# 3. إعداد الجداول وتحديث الأعمدة تلقائياً (Caching v3)
+# 3. إعداد الجداول وتحديث الأعمدة تلقائياً (Caching v4)
 # ==========================================
 @st.cache_resource
-def setup_database_v3():
+def setup_database_v4():
     try:
         conn = get_db_connection()
         conn.autocommit = True
@@ -151,7 +154,6 @@ def setup_database_v3():
         cur.execute('''CREATE TABLE IF NOT EXISTS Cheques (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, cheque_number TEXT, amount REAL, due_date TEXT, file_data TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS AuditLogs (id SERIAL PRIMARY KEY, log_time TEXT, username TEXT, role TEXT, action_type TEXT, details TEXT)''')
         
-        # التحديثات التلقائية الشاملة لجميع الجداول القديمة لمنع خطأ UndefinedColumn
         alter_queries = [
             "ALTER TABLE ProjectLicenses ADD COLUMN file_data TEXT",
             "ALTER TABLE ProjectDrawings ADD COLUMN file_data TEXT",
@@ -196,7 +198,7 @@ def setup_database_v3():
     except Exception as e:
         return False
 
-setup_database_v3()
+setup_database_v4()
 
 # ==========================================
 # 4. الثوابت والقوائم ومولدات التقارير (PDF)
@@ -892,16 +894,24 @@ def render_financials_module(can_edit=True):
             st.info("لا توجد أقساط تنفيذ أو مساهمات ملاك مسجلة حالياً.")
 
 # ==========================================
-# 9. موديول العملاء الشامل (بيانات، أقساط، تقييم التزام، وكشف حساب PDF)
+# 9. موديول العملاء الشامل (فصل صلاحيات خدمة العملاء عن المحاسب والمالك)
 # ==========================================
-def render_clients_and_crm_module(can_edit=True):
+def render_clients_and_crm_module(mode="view"):
+    """
+    mode = "sales"      -> خدمة العملاء والمبيعات: إضافة عملاء، إضافة وحدات، وجدولة أقساط جديدة فقط + كشف الحساب والتقييم.
+    mode = "accountant" -> المحاسب: متابعة الدفع فقط (تحديد دفع أم لا) للأقساط المجدولة + كشف الحساب والتقييم.
+    mode = "owner"      -> المالك: عرض البيانات + كشف الحساب والتقييم وتصدير PDF.
+    """
+    is_sales = (mode == "sales")
+    is_accountant = (mode == "accountant")
+    
     st.header("👥 إدارة العملاء، جدولة الأقساط، التقييم، وكشف الحساب")
     
     crm_tabs = st.tabs([
-        "📇 سجل بيانات العملاء", 
-        "🏢 الوحدات العقارية", 
+        "📊 تقييم العميل وكشف الحساب (PDF)",
         "💸 جدولة ومتابعة أقساط العملاء", 
-        "📊 تقييم العميل وكشف الحساب (PDF)"
+        "📇 سجل بيانات العملاء", 
+        "🏢 الوحدات العقارية"
     ])
     
     conn = get_db_connection()
@@ -919,158 +929,12 @@ def render_clients_and_crm_module(can_edit=True):
         inst_df = pd.read_sql_query("SELECT id, unit_code, client_name, amount, due_date, paid_date, status, notes FROM UnitInstallments ORDER BY due_date ASC", conn)
     except:
         inst_df = pd.DataFrame(columns=['id', 'unit_code', 'client_name', 'amount', 'due_date', 'paid_date', 'status', 'notes'])
-        
-    try:
-        cheques_df = pd.read_sql_query("SELECT unit_code, client_name, cheque_number, amount, due_date, status FROM Cheques ORDER BY due_date ASC", conn)
-    except:
-        cheques_df = pd.DataFrame(columns=['unit_code', 'client_name', 'cheque_number', 'amount', 'due_date', 'status'])
     conn.close()
     
     client_names_list = clients_df['name'].dropna().tolist() if not clients_df.empty else []
-    
-    # --- 1. سجل بيانات العملاء ---
+
+    # --- 1. تقييم العميل وكشف الحساب الرسمي (PDF) - متاح لخدمة العملاء والمحاسب والمالك ---
     with crm_tabs[0]:
-        st.subheader("📇 إضافة واستعراض بيانات العملاء")
-        if can_edit:
-            with st.form("add_client_form"):
-                c1, c2 = st.columns(2)
-                cl_name = c1.text_input("اسم العميل رباعي *")
-                cl_phone = c2.text_input("رقم الهاتف / واتساب *")
-                
-                c3, c4 = st.columns(2)
-                cl_nid = c3.text_input("الرقم القومي")
-                cl_addr = c4.text_input("العنوان بالتفصيل")
-                cl_notes = st.text_input("ملاحظات عن العميل")
-                
-                if st.form_submit_button("حفظ بيانات العميل 💾", type="primary"):
-                    if cl_name.strip() and cl_phone.strip():
-                        try:
-                            existing = db_fetchone("SELECT id FROM Clients WHERE name=%s", (cl_name.strip(),))
-                            if existing:
-                                db_execute(
-                                    "UPDATE Clients SET phone=%s, national_id=%s, address=%s, notes=%s WHERE id=%s",
-                                    (cl_phone.strip(), cl_nid.strip(), cl_addr.strip(), cl_notes.strip(), existing[0])
-                                )
-                            else:
-                                db_execute(
-                                    "INSERT INTO Clients (name, phone, national_id, address, notes) VALUES (%s, %s, %s, %s, %s)",
-                                    (cl_name.strip(), cl_phone.strip(), cl_nid.strip(), cl_addr.strip(), cl_notes.strip())
-                                )
-                            log_event("إضافة/تحديث عميل", f"العميل: {cl_name.strip()} - هاتف: {cl_phone.strip()}")
-                            st.success(f"تم حفظ بيانات العميل ({cl_name}) بنجاح!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"حدث خطأ: {e}")
-                    else:
-                        st.error("يرجى إدخال اسم العميل ورقم الهاتف.")
-                        
-        if not clients_df.empty:
-            disp_cl = clients_df.drop(columns=['id'])
-            disp_cl.columns = ['اسم العميل', 'رقم الهاتف', 'الرقم القومي', 'العنوان', 'ملاحظات']
-            st.dataframe(disp_cl, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا يوجد عملاء مسجلين بعد. قم بإضافة العملاء أولاً.")
-
-    # --- 2. الوحدات العقارية وربطها بالعملاء ---
-    with crm_tabs[1]:
-        st.subheader("🏢 تسكين الوحدات وربطها بالعملاء")
-        if can_edit:
-            with st.form("add_unit_crm"):
-                c1, c2, c3 = st.columns(3)
-                u_proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
-                u_code = c2.text_input("رقم / كود الوحدة (مثال: شقة 301 - اتحاد 5)")
-                u_status = c3.selectbox("حالة الوحدة", ["متاحة", "مباعة", "محجوزة"])
-                
-                c4, c5 = st.columns(2)
-                if client_names_list:
-                    u_client = c4.selectbox("اختر العميل المشتري (من سجل العملاء)", ["بدون عميل (متاحة)"] + client_names_list)
-                else:
-                    u_client = c4.text_input("اسم العميل (يفضل إضافته في سجل العملاء أولاً)")
-                    
-                u_price = c5.number_input("إجمالي سعر الوحدة (جنيه)", min_value=0.0, step=5000.0)
-                u_notes = st.text_input("ملاحظات التعاقد")
-                
-                if st.form_submit_button("تسجيل / تحديث الوحدة 🏢", type="primary"):
-                    if u_code.strip():
-                        final_cl = "" if u_client == "بدون عميل (متاحة)" else u_client
-                        db_execute(
-                            "INSERT INTO RealEstateUnits (project_name, unit_code, status, client_name, total_price, notes) VALUES (%s, %s, %s, %s, %s, %s)",
-                            (u_proj, u_code.strip(), u_status, final_cl, u_price, u_notes)
-                        )
-                        log_event("تسجيل وحدة عقارية", f"وحدة: {u_code} - مشروع: {u_proj} - عميل: {final_cl}")
-                        st.success("تم حفظ بيانات الوحدة بنجاح!")
-                        st.rerun()
-                    else:
-                        st.error("يرجى كتابة كود الوحدة.")
-                        
-        if not units_df.empty:
-            disp_u = units_df.drop(columns=['id'])
-            disp_u.columns = ['المشروع', 'كود الوحدة', 'الحالة', 'اسم العميل', 'إجمالي السعر', 'ملاحظات']
-            st.dataframe(disp_u, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد وحدات مسجلة.")
-
-    # --- 3. جدولة ومتابعة أقساط العملاء ---
-    with crm_tabs[2]:
-        st.subheader("💸 جدولة أقساط العملاء وتحديث حالات السداد")
-        sold_units = units_df[units_df['status'].isin(['مباعة', 'محجوزة'])] if not units_df.empty else pd.DataFrame()
-        
-        if can_edit:
-            with st.form("add_client_installment"):
-                c1, c2, c3 = st.columns(3)
-                if not sold_units.empty:
-                    u_opts = sold_units['unit_code'].fillna('') + " | " + sold_units['client_name'].fillna('')
-                    sel_u_cl = c1.selectbox("اختر الوحدة والعميل", u_opts)
-                else:
-                    sel_u_cl = c1.text_input("كود الوحدة | اسم العميل")
-                    
-                i_amt = c2.number_input("قيمة القسط (جنيه)", min_value=0.0, step=1000.0)
-                i_due = c3.date_input("تاريخ الاستحقاق")
-                
-                c4, c5 = st.columns(2)
-                i_status = c4.selectbox("حالة القسط", ["مستحق (لم يُدفع)", "مدفوع في الموعد", "مدفوع متأخر", "متأخر"])
-                i_notes = c5.text_input("بيان القسط (مثال: دفعة تعاقد / قسط ربع سنوي 1)")
-                
-                if st.form_submit_button("إضافة القسط لجدول العميل ➕", type="primary"):
-                    if i_amt > 0 and sel_u_cl:
-                        parts = str(sel_u_cl).split(" | ")
-                        u_code_val = parts[0].strip()
-                        u_cl_val = parts[1].strip() if len(parts) > 1 else ""
-                        p_date = get_egypt_time().strftime("%Y/%m/%d") if "مدفوع" in i_status else ""
-                        
-                        db_execute(
-                            "INSERT INTO UnitInstallments (unit_code, client_name, amount, due_date, paid_date, status, notes) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                            (u_code_val, u_cl_val, i_amt, i_due.strftime("%Y/%m/%d"), p_date, i_status, i_notes)
-                        )
-                        log_event("جدولة قسط عميل", f"عميل: {u_cl_val} - وحدة: {u_code_val} - مبلغ: {i_amt}")
-                        st.success("تم إضافة القسط لجدول العميل بنجاح!")
-                        st.rerun()
-                    else:
-                        st.error("يرجى تحديد الوحدة وإدخال قيمة القسط.")
-                        
-        if not inst_df.empty:
-            if can_edit:
-                with st.expander("🔄 تحصيل قسط / تحديث حالة قسط عميل (يؤثر في تقييم العميل)"):
-                    up1, up2, up3 = st.columns(3)
-                    inst_opts = inst_df['id'].astype(str) + " - العميل: " + inst_df['client_name'].fillna('') + " | وحدة: " + inst_df['unit_code'].fillna('') + " | مبلغ: " + inst_df['amount'].astype(str) + " (" + inst_df['due_date'].fillna('') + ")"
-                    sel_inst_to_upd = up1.selectbox("اختر القسط:", inst_opts)
-                    new_inst_st = up2.selectbox("حالة السداد الجديدة:", ["مدفوع في الموعد", "مدفوع متأخر", "مستحق (لم يُدفع)", "متأخر"])
-                    if up3.button("تأكيد تحديث القسط ✅", type="primary"):
-                        inst_id_val = int(sel_inst_to_upd.split(" - ")[0])
-                        paid_dt_val = get_egypt_time().strftime("%Y/%m/%d") if "مدفوع" in new_inst_st else ""
-                        db_execute("UPDATE UnitInstallments SET status=%s, paid_date=%s WHERE id=%s", (new_inst_st, paid_dt_val, inst_id_val))
-                        log_event("تحصيل/تحديث قسط عميل", f"تحديث قسط رقم {inst_id_val} إلى {new_inst_st}")
-                        st.success("تم تحديث حالة القسط وتعديل تقييم العميل!")
-                        st.rerun()
-                        
-            disp_inst = inst_df.drop(columns=['id'])
-            disp_inst.columns = ['كود الوحدة', 'اسم العميل', 'قيمة القسط', 'تاريخ الاستحقاق', 'تاريخ السداد الفعلي', 'الحالة', 'بيان / ملاحظات']
-            st.dataframe(disp_inst, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا توجد أقساط مجدولة للعملاء بعد.")
-
-    # --- 4. تقييم العميل وكشف الحساب الرسمي (PDF) ---
-    with crm_tabs[3]:
         st.subheader("📊 التقييم الائتماني للعميل وإصدار كشف الحساب (Statement of Account)")
         
         all_known_clients = sorted(list(set(
@@ -1149,7 +1013,7 @@ def render_clients_and_crm_module(can_edit=True):
                 
                 html_stmt = generate_html_report(f"كشف حساب عميل تفصيلي - {selected_client_stmt}", stmt_table_with_total, extra_summary_html=extra_summary)
                 st.download_button(
-                    "🖨️ إصدار وتحميل كشف حساب العميل الرسمي (PDF)",
+                    "🖨️ طباعة / تصدير كشف حساب العميل وتقييمه (PDF)",
                     data=html_stmt,
                     file_name=f"Client_Statement_{selected_client_stmt}_{get_egypt_time().strftime('%Y%m%d')}.html",
                     mime="text/html",
@@ -1158,6 +1022,155 @@ def render_clients_and_crm_module(can_edit=True):
                 )
             else:
                 st.info("لا توجد أقساط مسجلة لهذا العميل لإصدار كشف الحساب.")
+
+    # --- 2. جدولة ومتابعة أقساط العملاء (فصل خدمة العملاء عن المحاسب) ---
+    with crm_tabs[1]:
+        st.subheader("💸 جدولة أقساط العملاء ومتابعة السداد")
+        sold_units = units_df[units_df['status'].isin(['مباعة', 'محجوزة'])] if not units_df.empty else pd.DataFrame()
+        
+        # خدمة العملاء فقط يضيف الأقساط
+        if is_sales:
+            st.info("📝 **صلاحية خدمة العملاء:** يمكنك هنا إضافة وجدولة أقساط العميل بمواعيد استحقاقها، وستسمّع تلقائياً لدى قسم الحسابات لمتابعة التحصيل.")
+            with st.form("add_client_installment"):
+                c1, c2, c3 = st.columns(3)
+                if not sold_units.empty:
+                    u_opts = sold_units['unit_code'].fillna('') + " | " + sold_units['client_name'].fillna('')
+                    sel_u_cl = c1.selectbox("اختر الوحدة والعميل", u_opts)
+                elif client_names_list:
+                    sel_u_cl = c1.selectbox("اختر العميل", client_names_list)
+                else:
+                    sel_u_cl = c1.text_input("كود الوحدة | اسم العميل")
+                    
+                i_amt = c2.number_input("قيمة القسط (جنيه)", min_value=0.0, step=1000.0)
+                i_due = c3.date_input("تاريخ الاستحقاق")
+                
+                i_notes = st.text_input("بيان القسط (مثال: دفعة تعاقد / قسط ربع سنوي 1)")
+                
+                if st.form_submit_button("إضافة القسط وإرساله للحسابات ➕", type="primary"):
+                    if i_amt > 0 and sel_u_cl:
+                        if " | " in str(sel_u_cl):
+                            parts = str(sel_u_cl).split(" | ")
+                            u_code_val = parts[0].strip()
+                            u_cl_val = parts[1].strip() if len(parts) > 1 else ""
+                        else:
+                            u_code_val = "وحدة عقارية"
+                            u_cl_val = str(sel_u_cl).strip()
+                            
+                        db_execute(
+                            "INSERT INTO UnitInstallments (unit_code, client_name, amount, due_date, paid_date, status, notes) VALUES (%s, %s, %s, %s, '', 'مستحق (لم يُدفع)', %s)",
+                            (u_code_val, u_cl_val, i_amt, i_due.strftime("%Y/%m/%d"), i_notes)
+                        )
+                        log_event("جدولة قسط عميل (خدمة عملاء)", f"عميل: {u_cl_val} - وحدة: {u_code_val} - مبلغ: {i_amt}")
+                        st.success("تم جدولة القسط بنجاح وسمّع في شاشة الحسابات لمتابعة التحصيل!")
+                        st.rerun()
+                    else:
+                        st.error("يرجى تحديد العميل/الوحدة وإدخال قيمة القسط.")
+        elif is_accountant:
+            st.info("💼 **صلاحية الحسابات:** الأقساط المجدولة أدناه مضافة بواسطة خدمة العملاء. دورك هنا هو متابعة الدفع فقط وتحديد ما إذا كان العميل قد دفع أم لا.")
+
+        # المحاسب فقط يحدث حالة الدفع
+        if not inst_df.empty:
+            if is_accountant:
+                with st.expander("💳 متابعة السداد وتأكيد الدفع (خاص بالمحاسب فقط)", expanded=True):
+                    up1, up2, up3 = st.columns(3)
+                    inst_opts = inst_df['id'].astype(str) + " - العميل: " + inst_df['client_name'].fillna('') + " | وحدة: " + inst_df['unit_code'].fillna('') + " | مبلغ: " + inst_df['amount'].astype(str) + " (" + inst_df['due_date'].fillna('') + ")"
+                    sel_inst_to_upd = up1.selectbox("اختر القسط لتحديث حالة دفعه:", inst_opts)
+                    new_inst_st = up2.selectbox("هل دفع العميل؟ اختر الحالة:", ["مدفوع في الموعد", "مدفوع متأخر", "مستحق (لم يُدفع)", "متأخر"])
+                    if up3.button("تأكيد حالة الدفع ✅", type="primary"):
+                        inst_id_val = int(sel_inst_to_upd.split(" - ")[0])
+                        paid_dt_val = get_egypt_time().strftime("%Y/%m/%d") if "مدفوع" in new_inst_st else ""
+                        db_execute("UPDATE UnitInstallments SET status=%s, paid_date=%s WHERE id=%s", (new_inst_st, paid_dt_val, inst_id_val))
+                        log_event("تحديث دفع قسط عميل (حسابات)", f"تحديث قسط رقم {inst_id_val} إلى {new_inst_st}")
+                        st.success("تم تحديث حالة الدفع وتحديث التقييم الائتماني للعميل!")
+                        st.rerun()
+                        
+            disp_inst = inst_df.drop(columns=['id'])
+            disp_inst.columns = ['كود الوحدة', 'اسم العميل', 'قيمة القسط', 'تاريخ الاستحقاق', 'تاريخ السداد الفعلي', 'الحالة', 'بيان / ملاحظات']
+            st.dataframe(disp_inst, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد أقساط مجدولة للعملاء بعد.")
+
+    # --- 3. سجل بيانات العملاء (الإضافة لخدمة العملاء فقط) ---
+    with crm_tabs[2]:
+        st.subheader("📇 سجل بيانات العملاء")
+        if is_sales:
+            with st.form("add_client_form"):
+                c1, c2 = st.columns(2)
+                cl_name = c1.text_input("اسم العميل رباعي *")
+                cl_phone = c2.text_input("رقم الهاتف / واتساب *")
+                
+                c3, c4 = st.columns(2)
+                cl_nid = c3.text_input("الرقم القومي")
+                cl_addr = c4.text_input("العنوان بالتفصيل")
+                cl_notes = st.text_input("ملاحظات عن العميل")
+                
+                if st.form_submit_button("حفظ بيانات العميل 💾", type="primary"):
+                    if cl_name.strip() and cl_phone.strip():
+                        try:
+                            existing = db_fetchone("SELECT id FROM Clients WHERE name=%s", (cl_name.strip(),))
+                            if existing:
+                                db_execute(
+                                    "UPDATE Clients SET phone=%s, national_id=%s, address=%s, notes=%s WHERE id=%s",
+                                    (cl_phone.strip(), cl_nid.strip(), cl_addr.strip(), cl_notes.strip(), existing[0])
+                                )
+                            else:
+                                db_execute(
+                                    "INSERT INTO Clients (name, phone, national_id, address, notes) VALUES (%s, %s, %s, %s, %s)",
+                                    (cl_name.strip(), cl_phone.strip(), cl_nid.strip(), cl_addr.strip(), cl_notes.strip())
+                                )
+                            log_event("إضافة/تحديث عميل", f"العميل: {cl_name.strip()} - هاتف: {cl_phone.strip()}")
+                            st.success(f"تم حفظ بيانات العميل ({cl_name}) بنجاح!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"حدث خطأ: {e}")
+                    else:
+                        st.error("يرجى إدخال اسم العميل ورقم الهاتف.")
+                        
+        if not clients_df.empty:
+            disp_cl = clients_df.drop(columns=['id'])
+            disp_cl.columns = ['اسم العميل', 'رقم الهاتف', 'الرقم القومي', 'العنوان', 'ملاحظات']
+            st.dataframe(disp_cl, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا يوجد عملاء مسجلين بعد.")
+
+    # --- 4. الوحدات العقارية وربطها بالعملاء (الإضافة لخدمة العملاء فقط) ---
+    with crm_tabs[3]:
+        st.subheader("🏢 تسكين الوحدات وربطها بالعملاء")
+        if is_sales:
+            with st.form("add_unit_crm"):
+                c1, c2, c3 = st.columns(3)
+                u_proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
+                u_code = c2.text_input("رقم / كود الوحدة (مثال: شقة 301 - اتحاد 5)")
+                u_status = c3.selectbox("حالة الوحدة", ["متاحة", "مباعة", "محجوزة"])
+                
+                c4, c5 = st.columns(2)
+                if client_names_list:
+                    u_client = c4.selectbox("اختر العميل المشتري (من سجل العملاء)", ["بدون عميل (متاحة)"] + client_names_list)
+                else:
+                    u_client = c4.text_input("اسم العميل (يفضل إضافته في سجل العملاء أولاً)")
+                    
+                u_price = c5.number_input("إجمالي سعر الوحدة (جنيه)", min_value=0.0, step=5000.0)
+                u_notes = st.text_input("ملاحظات التعاقد")
+                
+                if st.form_submit_button("تسجيل / تحديث الوحدة 🏢", type="primary"):
+                    if u_code.strip():
+                        final_cl = "" if u_client == "بدون عميل (متاحة)" else u_client
+                        db_execute(
+                            "INSERT INTO RealEstateUnits (project_name, unit_code, status, client_name, total_price, notes) VALUES (%s, %s, %s, %s, %s, %s)",
+                            (u_proj, u_code.strip(), u_status, final_cl, u_price, u_notes)
+                        )
+                        log_event("تسجيل وحدة عقارية", f"وحدة: {u_code} - مشروع: {u_proj} - عميل: {final_cl}")
+                        st.success("تم حفظ بيانات الوحدة بنجاح!")
+                        st.rerun()
+                    else:
+                        st.error("يرجى كتابة كود الوحدة.")
+                        
+        if not units_df.empty:
+            disp_u = units_df.drop(columns=['id'])
+            disp_u.columns = ['المشروع', 'كود الوحدة', 'الحالة', 'اسم العميل', 'إجمالي السعر', 'ملاحظات']
+            st.dataframe(disp_u, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد وحدات مسجلة.")
 
 # ==========================================
 # 10. دوال المهام والمستخلصات ولوحة القيادة
@@ -1234,11 +1247,11 @@ def render_manage_extracts():
                 with st.expander(f"مستخلص: {row['extract_name']} | المشروع: {row['project_name']} | الحالة: {row['status']}"):
                     st.write(f"**القيمة:** {row['amount']} | **بواسطة:** {row['created_by']} | **التاريخ:** {row['date']}")
                     
-                    if pd.notna(row['impediment_notes']) and row['impediment_notes'].strip() != "":
+                    if pd.notna(row['impediment_notes']) and str(row['impediment_notes']).strip() != "":
                         st.warning(f"**معوقات وملاحظات المهندس:** {row['impediment_notes']}")
                         
                     file_content = row['file_data']
-                    if file_content and isinstance(file_content, str) and len(file_content) > 10:
+                    if is_valid_file(file_content):
                         try:
                             decoded_bytes = base64.b64decode(file_content)
                             st.download_button("📥 تحميل المستخلص للمراجعة", data=decoded_bytes, file_name=f"{row['extract_name']}.pdf", mime="application/octet-stream", key=f"dl_mng_ext_{row['id']}")
@@ -1644,7 +1657,7 @@ def owner_portal():
         render_financials_module(can_edit=True)
         
     elif nav == "👥 العملاء وكشف الحساب":
-        render_clients_and_crm_module(can_edit=False)
+        render_clients_and_crm_module(mode="owner")
         
     elif nav == "📈 التراخيص والرسومات":
         conn = get_db_connection()
@@ -1652,32 +1665,36 @@ def owner_portal():
         selected_project = st.selectbox("اختر المشروع:", project_list)
             
         st.markdown("### 📜 التراخيص ومستنداتها")
-        lic_df = pd.read_sql_query("SELECT license_name, due_date, status, file_data FROM ProjectLicenses WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
+        lic_df = pd.read_sql_query("SELECT id, license_name, due_date, status, file_data FROM ProjectLicenses WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
         if not lic_df.empty:
             for _, row in lic_df.iterrows():
                 with st.expander(f"ترخيص: {row['license_name']} | الحالة: {row['status']}"):
                     st.write(f"تاريخ الانتهاء: {row['due_date']}")
-                    if row['file_data'] and len(row['file_data']) > 10:
+                    if is_valid_file(row['file_data']):
                         try:
                             dec = base64.b64decode(row['file_data'])
-                            st.download_button("📥 تحميل المستند", data=dec, file_name=f"{row['license_name']}.pdf", mime="application/octet-stream", key=f"dl_lic_{row['license_name']}")
+                            st.download_button("📥 تحميل المستند", data=dec, file_name=f"{row['license_name']}.pdf", mime="application/octet-stream", key=f"dl_lic_{row['id']}")
                         except:
                             pass
+                    else:
+                        st.info("لا يوجد مستند مرفق لهذا الترخيص.")
         else:
             st.info("لا يوجد تراخيص")
             
         st.markdown("### 📐 الرسومات الهندسية")
-        draw_df = pd.read_sql_query("SELECT drawing_name, due_date, status, file_data FROM ProjectDrawings WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
+        draw_df = pd.read_sql_query("SELECT id, drawing_name, due_date, status, file_data FROM ProjectDrawings WHERE project_name = %s ORDER BY due_date ASC", conn, params=(selected_project,))
         if not draw_df.empty:
             for _, row in draw_df.iterrows():
                 with st.expander(f"رسم: {row['drawing_name']} | الحالة: {row['status']}"):
                     st.write(f"تاريخ التسليم: {row['due_date']}")
-                    if row['file_data'] and len(row['file_data']) > 10:
+                    if is_valid_file(row['file_data']):
                         try:
                             dec = base64.b64decode(row['file_data'])
-                            st.download_button("📥 تحميل لوحة الرسم", data=dec, file_name=f"{row['drawing_name']}.pdf", mime="application/octet-stream", key=f"dl_drw_{row['drawing_name']}")
+                            st.download_button("📥 تحميل لوحة الرسم", data=dec, file_name=f"{row['drawing_name']}.pdf", mime="application/octet-stream", key=f"dl_drw_{row['id']}")
                         except:
                             pass
+                    else:
+                        st.info("لا توجد لوحة مرفقة لهذا الرسم.")
         else:
             st.info("لا يوجد رسومات")
         conn.close()
@@ -1697,10 +1714,10 @@ def owner_portal():
                         st.write(f"**تاريخ الإنشاء:** {row['date']} | **بواسطة:** {row['created_by']}")
                         st.success(f"📍 **المستخلص الآن في عهدة:** {blocker}")
                         
-                        if pd.notna(row['impediment_notes']) and row['impediment_notes'].strip() != "":
+                        if pd.notna(row['impediment_notes']) and str(row['impediment_notes']).strip() != "":
                             st.warning(f"**معوقات وملاحظات مسجلة عليه:** {row['impediment_notes']}")
                             
-                        if row['file_data'] and len(row['file_data']) > 10:
+                        if is_valid_file(row['file_data']):
                             try:
                                 dec = base64.b64decode(row['file_data'])
                                 st.download_button("📥 تحميل المستخلص (PDF)", data=dec, file_name=f"{row['extract_name']}_extract.pdf", mime="application/octet-stream", key=f"dl_trk_ext_{row['id']}")
@@ -1845,7 +1862,7 @@ def manager_portal():
     elif nav == "📄 مراجعة المستخلصات":
         render_manage_extracts()
     elif nav == "👥 إدارة العملاء (CRM)":
-        render_clients_and_crm_module(can_edit=True)
+        render_clients_and_crm_module(mode="sales")
     elif nav == "👤 لوحتي الشخصية":
         render_employee_dashboard(emp_id, balance)
 
@@ -1857,15 +1874,15 @@ def accountant_portal():
     render_sidebar("المحاسب")
     nav = st.radio(
         "القائمة:", 
-        ["👤 لوحتي الشخصية", "💰 أقساط الجهاز والتنفيذ (المساهمين)", "👥 حسابات وأقساط العملاء", "📄 إدارة المستخلصات"], 
+        ["👤 لوحتي الشخصية", "💰 أقساط الجهاز والتنفيذ (المساهمين)", "👥 متابعة دفع أقساط العملاء وكشف الحساب", "📄 إدارة المستخلصات"], 
         horizontal=True
     )
     st.divider()
     
     if nav == "💰 أقساط الجهاز والتنفيذ (المساهمين)":
         render_financials_module(can_edit=True)
-    elif nav == "👥 حسابات وأقساط العملاء":
-        render_clients_and_crm_module(can_edit=True)
+    elif nav == "👥 متابعة دفع أقساط العملاء وكشف الحساب":
+        render_clients_and_crm_module(mode="accountant")
     elif nav == "📄 إدارة المستخلصات":
         render_manage_extracts()
     else:
@@ -2046,17 +2063,20 @@ def legal_portal():
                     
         st.divider()
         st.subheader("العقود المؤرشفة حالياً")
-        archived = pd.read_sql_query("SELECT unit_code, client_name, contract_file FROM RealEstateUnits WHERE contract_file IS NOT NULL AND length(contract_file) > 10", conn)
+        archived = pd.read_sql_query("SELECT id, unit_code, client_name, contract_file FROM RealEstateUnits WHERE contract_file IS NOT NULL", conn)
         
+        has_archived = False
         if not archived.empty:
             for _, row in archived.iterrows():
-                with st.expander(f"📄 عقد وحدة: {row['unit_code']} | العميل: {row['client_name']}"):
-                    try:
-                        dec = base64.b64decode(row['contract_file'])
-                        st.download_button("📥 تحميل / عرض العقد", data=dec, file_name=f"Contract_{row['unit_code']}.pdf", mime="application/octet-stream", key=f"dl_contract_{row['unit_code']}")
-                    except:
-                        pass
-        else:
+                if is_valid_file(row['contract_file']):
+                    has_archived = True
+                    with st.expander(f"📄 عقد وحدة: {row['unit_code']} | العميل: {row['client_name']}"):
+                        try:
+                            dec = base64.b64decode(row['contract_file'])
+                            st.download_button("📥 تحميل / عرض العقد", data=dec, file_name=f"Contract_{row['unit_code']}.pdf", mime="application/octet-stream", key=f"dl_contract_{row['id']}")
+                        except:
+                            pass
+        if not has_archived:
             st.info("لا توجد عقود مؤرشفة في النظام.")
         conn.close()
         
@@ -2105,7 +2125,7 @@ def legal_portal():
             st.download_button("🖨️ طباعة تقرير الشيكات (رسمي PDF)", data=html_chq, file_name=f"Cheques_{get_egypt_time().strftime('%Y%m%d')}.html", mime='text/html')
             
             for _, row in chq_df.iterrows():
-                if row['file_data'] and len(row['file_data']) > 10:
+                if is_valid_file(row['file_data']):
                     with st.expander(f"صورة شيك رقم: {row['cheque_number']} | الوحدة: {row['unit_code']}"):
                         try:
                             dec = base64.b64decode(row['file_data'])
@@ -2116,7 +2136,7 @@ def legal_portal():
             st.info("لا توجد شيكات مسجلة.")
         conn.close()
     elif nav == "📊 كشف حساب وتقييم عميل":
-        render_clients_and_crm_module(can_edit=False)
+        render_clients_and_crm_module(mode="owner")
     elif nav == "👤 لوحتي الشخصية":
         render_employee_dashboard(emp_id, balance)
 
@@ -2126,11 +2146,11 @@ def sales_portal():
     balance = emp_info[2]
     
     render_sidebar("المبيعات وخدمة العملاء")
-    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "👥 إدارة العملاء والوحدات والأقساط"], horizontal=True)
+    nav = st.radio("القائمة:", ["👤 لوحتي الشخصية", "👥 إدارة العملاء وجدولة الأقساط وكشف الحساب"], horizontal=True)
     st.divider()
     
-    if nav == "👥 إدارة العملاء والوحدات والأقساط":
-        render_clients_and_crm_module(can_edit=True)
+    if nav == "👥 إدارة العملاء وجدولة الأقساط وكشف الحساب":
+        render_clients_and_crm_module(mode="sales")
     else:
         render_employee_dashboard(emp_id, balance)
 
