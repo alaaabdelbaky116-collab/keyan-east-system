@@ -16,7 +16,7 @@ except ImportError:
     GEO_AVAILABLE = False
 
 # ==========================================
-# 1. التصميم العام والشريط الجانبي والتنبيهات
+# 1. التصميم العام والشريط الجانبي ومركز الأمان والتنبيهات
 # ==========================================
 def apply_custom_theme():
     st.markdown("""
@@ -54,6 +54,61 @@ def set_dynamic_background():
             """,
             unsafe_allow_html=True
         )
+
+def render_security_and_backup_center():
+    st.subheader("🛡️ مركز الأمان والنسخ الاحتياطي ومساحة السيرفر (Supabase)")
+    used_mb, used_pct, tables_df = get_database_size_info()
+    remaining_mb = max(0.0, SUPABASE_FREE_LIMIT_MB - used_mb)
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("💾 المساحة المستهلكة حالياً", f"{used_mb} MB", f"{used_pct}% من الباقة المجانية")
+    c2.metric("🟢 المساحة المتبقية (من 500 MB)", f"{remaining_mb:.2f} MB")
+    c3.metric("🔒 تشفير الاتصال والحسابات", "SSL + SHA-256 نشط")
+    
+    st.progress(min(1.0, used_pct / 100.0), text=f"نسبة استهلاك قاعدة بيانات Supabase: {used_mb} ميجابايت من أصل 500 ميجابايت ({used_pct}%)")
+    
+    if not tables_df.empty:
+        with st.expander("📊 تفاصيل استهلاك المساحة لكل جدول في قاعدة البيانات"):
+            st.dataframe(tables_df, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    col_b1, col_b2, col_b3 = st.columns(3)
+    
+    with col_b1:
+        st.markdown("##### 📦 النسخة الاحتياطية الشاملة")
+        st.caption("تحميل جميع جداول وحسابات الشركة في ملف Excel واحد لحفظه على جهازك أو Google Drive.")
+        if st.button("⚙️ تجهيز ملف النسخة الاحتياطية الآن", key="prep_bk_main", use_container_width=True):
+            with st.spinner("جاري تجميع كافة جداول الشركة..."):
+                bk_bytes, bk_filename, bk_mime = generate_full_backup_file()
+                st.session_state['ready_backup_data'] = (bk_bytes, bk_filename, bk_mime)
+                log_event("تجهيز نسخة احتياطية", f"الملف: {bk_filename}")
+        if 'ready_backup_data' in st.session_state:
+            b_bytes, b_name, b_mime = st.session_state['ready_backup_data']
+            st.download_button(
+                label=f"📥 اضغط لتحميل ({b_name})",
+                data=b_bytes,
+                file_name=b_name,
+                mime=b_mime,
+                type="primary",
+                use_container_width=True,
+                key="dl_bk_main"
+            )
+
+    with col_b2:
+        st.markdown("##### 🧹 توفير المساحة (تفريغ الصور القديمة)")
+        st.caption("يمسح صور كاميرا البصمة القديمة فقط لتفريغ المساحة مع بقاء سجلات وتواريخ وتقارير الحضور كاملة.")
+        days_keep = st.selectbox("الاحتفاظ بصور البصمة لآخر:", [30, 60, 90, 180], index=2, format_func=lambda x: f"{x} يوم (ومسح الصور الأقدم)", key="cln_days_main")
+        if st.button("🧹 تفريغ صور البصمة القديمة", key="btn_cln_main", use_container_width=True):
+            freed_rows = cleanup_old_attendance_photos(days_keep)
+            st.success(f"✅ تم تفريغ الصور من ({freed_rows}) سجل قديم بنجاح مع بقاء بيانات الحضور!")
+            st.rerun()
+
+    with col_b3:
+        st.markdown("##### 🔐 تشفير كلمات المرور (SHA-256)")
+        st.caption("تحويل أي كلمة مرور نصية في جدول المستخدمين إلى شفرة رقمية غير قابلة للقراءة.")
+        if st.button("🔐 تشفير جميع كلمات المرور الحالية", key="btn_hash_main", use_container_width=True):
+            enc_cnt = encrypt_all_existing_passwords()
+            st.success(f"✅ تم تأمين وتشفير ({enc_cnt}) حساب بنظام SHA-256!")
 
 def render_sidebar(role_title):
     with st.sidebar:
@@ -94,11 +149,40 @@ def render_sidebar(role_title):
                 new_pwd = st.text_input("كلمة المرور الجديدة", type="password", placeholder="أدخل باسورد قوي")
                 if st.form_submit_button("تحديث الحساب", use_container_width=True):
                     if len(new_pwd) >= 3:
-                        db_execute("UPDATE Users SET password=%s WHERE username=%s", (new_pwd, st.session_state['username']))
-                        log_event("تغيير كلمة المرور", "قام المستخدم بتحديث كلمة المرور الخاصة به")
-                        st.success("تم التغيير بنجاح! احتفظ بها.")
+                        db_execute("UPDATE Users SET password=%s WHERE username=%s", (hash_password(new_pwd), st.session_state['username']))
+                        log_event("تغيير كلمة المرور", "قام المستخدم بتحديث كلمة المرور الخاصة به (مشفرة SHA-256)")
+                        st.success("تم التغيير والتشفير بنجاح! احتفظ بها.")
                     else:
                         st.error("كلمة المرور قصيرة جداً.")
+
+        active_role = st.session_state.get('current_role') or st.session_state.get('role')
+        if active_role in ['admin', 'owner', 'it']:
+            with st.expander("🛡️ الأمان والنسخ الاحتياطي والمساحة"):
+                used_mb, used_pct, _ = get_database_size_info()
+                st.caption(f"💾 مساحة Supabase: **{used_mb} MB** / 500 MB ({used_pct}%)")
+                st.progress(min(1.0, used_pct / 100.0))
+                
+                if st.button("📦 تجهيز نسخة احتياطية (Excel)", key="sb_prep_bk", use_container_width=True):
+                    bk_bytes, bk_filename, bk_mime = generate_full_backup_file()
+                    st.session_state['sb_backup_data'] = (bk_bytes, bk_filename, bk_mime)
+                    log_event("تجهيز نسخة احتياطية (شريط جانبي)", bk_filename)
+                if 'sb_backup_data' in st.session_state:
+                    sb_bytes, sb_name, sb_mime = st.session_state['sb_backup_data']
+                    st.download_button(
+                        label="📥 تحميل النسخة الاحتياطية الآن",
+                        data=sb_bytes,
+                        file_name=sb_name,
+                        mime=sb_mime,
+                        type="primary",
+                        use_container_width=True,
+                        key="sb_dl_bk"
+                    )
+                if st.button("🧹 تفريغ صور البصمة (> 90 يوم)", key="sb_cln_ph", use_container_width=True):
+                    cnt = cleanup_old_attendance_photos(90)
+                    st.success(f"تم تفريغ صور ({cnt}) سجل قديم!")
+                if st.button("🔐 تشفير باسوردات الحسابات", key="sb_enc_pw", use_container_width=True):
+                    c_enc = encrypt_all_existing_passwords()
+                    st.success(f"تم تشفير ({c_enc}) حساب!")
                         
         st.divider()
         if st.button("🚪 تسجيل الخروج", use_container_width=True):
@@ -256,6 +340,10 @@ def render_department_exemption_manager(department_filter="الكل"):
 # ==========================================
 def render_company_dashboard():
     st.header("📊 المؤشرات الحيوية والتفاعلية للشركة")
+    
+    with st.expander("🛡️ مركز الأمان والنسخ الاحتياطي ومراقبة مساحة Supabase (اضغط للفتح)", expanded=False):
+        render_security_and_backup_center()
+
     conn = get_db_connection()
     today = get_egypt_time().strftime("%Y/%m/%d")
 
@@ -825,7 +913,6 @@ def render_clients_and_crm_module(mode="view"):
     
     client_names_list = clients_df['name'].dropna().tolist() if not clients_df.empty else []
 
-    # --- التبويب 1: تقييم العميل وكشف الحساب ---
     with crm_tabs[0]:
         st.subheader("📊 التقييم الائتماني للعميل وإصدار كشف الحساب (Statement of Account)")
         
@@ -923,7 +1010,6 @@ def render_clients_and_crm_module(mode="view"):
             else:
                 st.info("لا توجد أقساط مسجلة لهذا العميل لإصدار كشف الحساب.")
 
-    # --- التبويب 2: متابعة التحصيل ودورة تصعيد المتأخرات ---
     with crm_tabs[1]:
         st.subheader("📞 متابعة تحصيل الأقساط ودورة تصعيد المتأخرات")
         st.markdown("""
@@ -1108,11 +1194,9 @@ def render_clients_and_crm_module(mode="view"):
         else:
             st.info("لا توجد أقساط مجدولة للعملاء بعد.")
 
-    # --- التبويب 3: إعادة تقييم وإعادة بيع الوحدات ---
     with crm_tabs[2]:
         render_unit_resale_module(mode=mode)
 
-    # --- التبويب 4: سجل بيانات العملاء ---
     with crm_tabs[3]:
         st.subheader("📇 سجل بيانات العملاء")
         if is_sales:
@@ -1173,7 +1257,6 @@ def render_clients_and_crm_module(mode="view"):
         else:
             st.info("لا يوجد عملاء مسجلين بعد.")
 
-    # --- التبويب 5: الوحدات العقارية ---
     with crm_tabs[4]:
         st.subheader("🏢 تسكين الوحدات وربطها بالعملاء")
         if is_sales:
@@ -1233,7 +1316,7 @@ def render_clients_and_crm_module(mode="view"):
             st.info("لا توجد وحدات مسجلة.")
 
 # ==========================================
-# 7. الشاشة المشتركة للموظفين (البصمة والتقارير والرصيد السنوي)
+# 7. الشاشة المشتركة للموظفين (مع ضغط فائق لصور البصمة لتوفير المساحة)
 # ==========================================
 def render_employee_dashboard(emp_id, balance):
     stats = get_employee_stats(emp_id)
@@ -1312,9 +1395,11 @@ def render_employee_dashboard(emp_id, balance):
                     
                     if camera_photo:
                         img = Image.open(camera_photo)
-                        img.thumbnail((300, 300))
+                        if img.mode in ("RGBA", "P"):
+                            img = img.convert("RGB")
+                        img.thumbnail((220, 220))
                         buffered = io.BytesIO()
-                        img.save(buffered, format="JPEG", quality=85)
+                        img.save(buffered, format="JPEG", quality=60, optimize=True)
                         photo_uri = f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
                         
                         try:
