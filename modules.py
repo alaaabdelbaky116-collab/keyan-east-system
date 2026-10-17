@@ -5,11 +5,17 @@ import base64
 from PIL import Image
 import io
 import os
+import psycopg2
 import pytz
+import math
 import plotly.express as px
 import hashlib
 import zipfile
-from db import *
+
+try:
+    from db import *
+except Exception:
+    pass
 
 try:
     from streamlit_js_eval import get_geolocation
@@ -18,18 +24,23 @@ except ImportError:
     GEO_AVAILABLE = False
 
 # ==========================================
-# 0. تهيئة جداول اتحاد الملاك والتنظيف التلقائي أول الشهر
+# 0. تأمين شامل لجميع الدوال والثوابت لمنع أي NameError نهائياً
 # ==========================================
+LOGO_FILE = "image_c5a585.png"
+OFFICIAL_IN = '11:00'
+OFFICIAL_OUT = '18:00'
+GRACE_PERIOD_MINS = 60
+REQUIRED_HOURS = 7
+DEFAULT_ANNUAL_BALANCE = 21
 SUPABASE_FREE_LIMIT_MB = 500.0
 
-if 'CURRENCY_OPTIONS' not in globals():
-    CURRENCY_OPTIONS = [
-        "ج.م (EGP)", 
-        "دولار (USD)", 
-        "ريال سعودي (SAR)", 
-        "درهم إماراتي (AED)", 
-        "يورو (EUR)"
-    ]
+CURRENCY_OPTIONS = [
+    "ج.م (EGP)", 
+    "دولار (USD)", 
+    "ريال سعودي (SAR)", 
+    "درهم إماراتي (AED)", 
+    "يورو (EUR)"
+]
 
 QUARTER_OPTIONS = [
     "الربع الأول (Q1)",
@@ -38,6 +49,242 @@ QUARTER_OPTIONS = [
     "الربع الرابع (Q4)",
     "دفعة أرض / تأسيس"
 ]
+
+COMPANY_DEPARTMENTS = [
+    "اتش ار (HR)", "مبيعات وخدمة عملاء", "عقود قانونية", "تراخيص", "حسابات", 
+    "مهندسين مكتب فني", "مهندسين إدارة وتخطيط", "مهندسين تنفيذ", 
+    "إدارة المستخلصات", "إدارة الـ IT", "إدارة عليا", "أخرى"
+]
+
+DISPLAY_MAP = {
+    "none": "لا يوجد", "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
+    "hr": "موارد بشرية", "sales": "مبيعات وخدمة عملاء", "legal": "عقود قانونية", "engineer": "مهندس", 
+    "planning_engineer": "مهندس إدارة وتخطيط", "extracts_engineer": "مهندس مستخلصات", 
+    "accountant": "محاسب", "licensing": "مسؤول تراخيص", "it": "مهندس IT", 
+    "admin": "مسؤول نظام", "owner": "المالك"
+}
+
+def get_egypt_time():
+    return datetime.now(pytz.timezone('Africa/Cairo'))
+
+def get_db_connection():
+    db_url = st.secrets["DB_URL"]
+    return psycopg2.connect(db_url)
+
+def db_execute(query, params=()):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def db_fetchone(query, params=()):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    res = cur.fetchone()
+    cur.close()
+    conn.close()
+    return res
+
+def db_fetchall(query, params=()):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(query, params)
+    res = cur.fetchall()
+    cur.close()
+    conn.close()
+    return res
+
+def is_valid_file(val):
+    return pd.notna(val) and isinstance(val, str) and len(val.strip()) > 10
+
+def hash_password(password_str):
+    if not password_str:
+        return ""
+    return hashlib.sha256(str(password_str).encode('utf-8')).hexdigest()
+
+def log_event(action_type, details=""):
+    try:
+        user = st.session_state.get('username') or 'غير مسجل'
+        role = st.session_state.get('current_role') or st.session_state.get('role') or 'غير محدد'
+        now_str = get_egypt_time().strftime("%Y/%m/%d %H:%M:%S")
+        db_execute(
+            "INSERT INTO AuditLogs (log_time, username, role, action_type, details) VALUES (%s, %s, %s, %s, %s)",
+            (now_str, user, role, action_type, details)
+        )
+    except Exception:
+        pass
+
+def get_employee_info(emp_id):
+    try:
+        res = db_fetchone("SELECT name, department, annual_balance FROM Employees WHERE emp_id=%s", (emp_id,))
+        if res:
+            return res
+    except Exception:
+        pass
+    return ("غير مسجل", "غير محدد", DEFAULT_ANNUAL_BALANCE)
+
+def get_employee_stats(emp_id):
+    try:
+        res = db_fetchone("SELECT month, delay_mins, absent_dates, overtime_hours FROM MonthlyStats WHERE emp_id=%s ORDER BY month DESC LIMIT 1", (emp_id,))
+        if res:
+            return res
+    except Exception:
+        pass
+    return (None, 0.0, "", 0.0)
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000 
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return R * c
+
+def format_hhmm(total_minutes):
+    if not total_minutes or pd.isna(total_minutes) or total_minutes <= 0:
+        return "00:00"
+    hours = int(total_minutes // 60)
+    mins = int(total_minutes % 60)
+    return f"{hours}:{mins:02d}"
+
+def calculate_hours_diff(check_in, check_out):
+    if pd.isna(check_in) or pd.isna(check_out) or not check_in or not check_out:
+        return "⚠️ ناقصة بصمة"
+    try:
+        in_time = datetime.strptime(str(check_in).strip(), "%H:%M")
+        out_time = datetime.strptime(str(check_out).strip(), "%H:%M")
+        diff_mins = (out_time - in_time).total_seconds() / 60
+        if diff_mins < 0:
+            diff_mins += 24 * 60  
+        hours = int(diff_mins // 60)
+        mins = int(diff_mins % 60)
+        return f"{hours}:{mins:02d}"
+    except Exception:
+        return "خطأ في الوقت"
+
+def get_base64_image(image_path):
+    try:
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode('utf-8')
+    except Exception:
+        return ""
+
+def generate_html_report(title, df, extra_summary_html=""):
+    logo_b64 = get_base64_image(LOGO_FILE)
+    if logo_b64:
+        logo_img = f'<img src="data:image/png;base64,{logo_b64}" alt="Logo" style="max-height: 80px;">'
+    else:
+        logo_img = '<h2 style="color:#D4AF37;">كيان الشرقية</h2>'
+        
+    html_table = df.to_html(index=False, classes='report-table', border=0)
+    html_table = html_table.replace("<tr>\n      <td>إجمالي الساعات</td>", "<tr class='total-row'>\n      <td>إجمالي الساعات</td>")
+    html_table = html_table.replace("<tr>\n      <td>الإجمالي</td>", "<tr class='total-row'>\n      <td>الإجمالي</td>")
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html dir="rtl" lang="ar">
+    <head>
+        <meta charset="UTF-8">
+        <title>{title}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap" rel="stylesheet">
+        <style>
+            body {{ font-family: 'Tajawal', sans-serif; padding: 40px; color: #0b172a; background: #fff; }}
+            .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #D4AF37; padding-bottom: 15px; margin-bottom: 30px; }}
+            .company-info h1 {{ margin: 0; color: #0b172a; font-size: 28px; font-weight: 900; }}
+            .company-info p {{ margin: 5px 0 0; color: #555; font-size: 16px; font-weight: 700; }}
+            .report-title {{ text-align: center; margin-bottom: 25px; }}
+            .report-title h2 {{ color: #0b172a; display: inline-block; padding-bottom: 5px; border-bottom: 2px dashed #D4AF37; margin-bottom: 5px; }}
+            .summary-box {{ background: #f8f9fa; border: 2px solid #D4AF37; border-radius: 8px; padding: 15px; margin-bottom: 25px; display: flex; justify-content: space-around; flex-wrap: wrap; }}
+            .summary-item {{ text-align: center; margin: 5px 15px; }}
+            .summary-item span {{ display: block; font-size: 13px; color: #555; }}
+            .summary-item strong {{ font-size: 18px; color: #0b172a; }}
+            .report-table {{ width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 14px; text-align: right; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+            .report-table th, .report-table td {{ border: 1px solid #ddd; padding: 10px 12px; }}
+            .report-table th {{ background-color: #0b172a; color: #D4AF37; font-weight: 900; }}
+            .report-table tr:nth-child(even) {{ background-color: #f8f9fa; }}
+            .total-row {{ background-color: #D4AF37 !important; color: #0b172a; font-weight: 900; }}
+            .total-row td {{ border-top: 2px solid #0b172a; }}
+            .footer {{ margin-top: 50px; text-align: center; font-size: 13px; color: #666; border-top: 2px solid #eee; padding-top: 15px; }}
+            .print-btn {{ display: block; width: 250px; margin: 0 auto 30px auto; padding: 12px; background: #D4AF37; color: #0b172a; text-align: center; text-decoration: none; border-radius: 8px; font-weight: bold; cursor: pointer; border: none; font-family: 'Tajawal', sans-serif; font-size: 16px; }}
+            .print-btn:hover {{ background: #b8952b; }}
+            @media print {{
+                body {{ padding: 0; }}
+                .print-btn {{ display: none; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <button class="print-btn" onclick="window.print()">🖨️ طباعة أو حفظ التقرير كـ PDF</button>
+        <div class="header">
+            <div class="company-info">
+                <h1>كيان الشرقية</h1>
+                <p>للمقاولات والاستثمار العقاري - إدارة نظم المعلومات</p>
+            </div>
+            <div>{logo_img}</div>
+        </div>
+        <div class="report-title">
+            <h2>{title}</h2>
+            <p>تاريخ الإصدار: {get_egypt_time().strftime('%Y/%m/%d %H:%M')}</p>
+        </div>
+        {extra_summary_html}
+        {html_table}
+        <div class="footer">
+            <p>هذا المستند مُصدر آلياً وموثق من نظام (ERP) الخاص بشركة كيان الشرقية © {get_egypt_time().strftime('%Y')}</p>
+        </div>
+    </body>
+    </html>
+    """
+    return html_content
+
+def evaluate_client_commitment(inst_df):
+    if inst_df.empty:
+        return "⚪ لم يتم جدولة مطالبات بعد", 100.0, 0, 0
+        
+    today_str = get_egypt_time().strftime("%Y/%m/%d")
+    on_time_count = 0
+    late_or_overdue_count = 0
+    evaluated_installments = 0
+    
+    for _, row in inst_df.iterrows():
+        status = str(row['status'])
+        if "ملغي" in status:
+            continue
+        due_date = str(row['due_date'])
+        
+        if status == "مدفوع في الموعد" or status == "مدفوع":
+            on_time_count += 1
+            evaluated_installments += 1
+        elif status == "مدفوع متأخر":
+            late_or_overdue_count += 1
+            evaluated_installments += 1
+        elif status == "متأخر":
+            late_or_overdue_count += 1
+            evaluated_installments += 1
+        elif status == "مستحق (لم يُدفع)":
+            if due_date < today_str:
+                late_or_overdue_count += 1
+                evaluated_installments += 1
+                
+    if evaluated_installments == 0:
+        return "🟢 منتظم (لم يحن موعد الاستحقاق بعد)", 100.0, on_time_count, late_or_overdue_count
+        
+    score = (on_time_count / evaluated_installments) * 100.0
+    
+    if score >= 90:
+        badge = f"🌟 مساهم ملتزم جداً - أولوية أولى ({score:.0f}%)"
+    elif score >= 70:
+        badge = f"👍 التزام جيد ({score:.0f}%)"
+    elif score >= 50:
+        badge = f"⚠️ التزام متوسط - يحتاج متابعة ({score:.0f}%)"
+    else:
+        badge = f"🚨 متأخر في سداد الأرباع ({score:.0f}%)"
+        
+    return badge, score, on_time_count, late_or_overdue_count
 
 @st.cache_resource
 def ensure_shareholders_union_schema():
@@ -94,7 +341,7 @@ def ensure_shareholders_union_schema():
         for q in alter_stmts:
             try:
                 cur.execute(q)
-            except:
+            except Exception:
                 pass
 
         cur.close()
@@ -104,7 +351,6 @@ def ensure_shareholders_union_schema():
         return False
 
 def cleanup_previous_months_photos(is_auto=False):
-    """مسح صور كاميرا البصمة للشهور السابقة فقط مع الحفاظ الكامل على سجلات وتواريخ الحضور والتقارير"""
     now_eg = get_egypt_time()
     first_day_current_month = now_eg.strftime("%Y/%m") + "/01"
     conn = get_db_connection()
@@ -123,7 +369,6 @@ def cleanup_previous_months_photos(is_auto=False):
     return deleted_count, first_day_current_month
 
 def run_auto_monthly_photo_cleanup():
-    """يعمل تلقائياً مع بداية كل شهر جديد لتفريغ صور الشهور السابقة"""
     try:
         ensure_shareholders_union_schema()
         current_month_tag = get_egypt_time().strftime("%Y/%m")
@@ -140,13 +385,20 @@ def run_auto_monthly_photo_cleanup():
 
 def get_database_size_info_safe():
     try:
-        if 'get_database_size_info' in globals():
-            return get_database_size_info()
         res = db_fetchone("SELECT pg_database_size(current_database())")
         size_bytes = float(res[0]) if res and res[0] else 0.0
         size_mb = round(size_bytes / (1024 * 1024), 2)
         pct = round(min(100.0, (size_mb / SUPABASE_FREE_LIMIT_MB) * 100.0), 1)
-        return size_mb, pct, pd.DataFrame()
+        
+        tables_query = """
+            SELECT relname AS table_name,
+                   pg_total_relation_size(relid) AS total_bytes
+            FROM pg_catalog.pg_statio_user_tables
+            ORDER BY pg_total_relation_size(relid) DESC LIMIT 6;
+        """
+        t_rows = db_fetchall(tables_query)
+        table_breakdown = [{"الجدول": t_name, "المساحة (MB)": round(float(t_bytes) / (1024 * 1024), 2)} for t_name, t_bytes in t_rows]
+        return size_mb, pct, pd.DataFrame(table_breakdown)
     except Exception:
         return 0.0, 0.0, pd.DataFrame()
 
@@ -193,8 +445,12 @@ def apply_custom_theme():
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap');
-        html, body, [class*="css"], p, h1, h2, h3, h4, h5, h6, span, div, button, input, select, textarea {
+        html, body, p, h1, h2, h3, h4, h5, h6, button, input, select, textarea, label, td, th {
             font-family: 'Tajawal', sans-serif !important;
+        }
+        /* الحفاظ على خط أيقونات Streamlit لمنع ظهور كلمة _arrow_right */
+        [data-testid="stIconMaterial"], .material-icons, span[translate="no"] {
+            font-family: 'Material Symbols Rounded', sans-serif !important;
         }
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
@@ -243,6 +499,10 @@ def render_security_and_backup_center():
     
     st.progress(min(1.0, used_pct / 100.0), text=f"نسبة استهلاك قاعدة بيانات Supabase: {used_mb} ميجابايت من أصل 500 ميجابايت ({used_pct}%)")
 
+    if not tables_df.empty:
+        with st.expander("📊 تفاصيل استهلاك المساحة لكل جدول"):
+            st.dataframe(tables_df, use_container_width=True, hide_index=True)
+
     st.markdown("---")
     col_b1, col_b2 = st.columns(2)
     
@@ -278,7 +538,7 @@ def render_sidebar(role_title):
         try:
             if os.path.exists(LOGO_FILE):
                 st.image(LOGO_FILE, use_container_width=True)
-        except:
+        except Exception:
             pass
         
         if st.session_state.get('secondary_role') and st.session_state['secondary_role'] != 'none':
@@ -312,8 +572,7 @@ def render_sidebar(role_title):
                 new_pwd = st.text_input("كلمة المرور الجديدة", type="password", placeholder="أدخل باسورد قوي")
                 if st.form_submit_button("تحديث الحساب", use_container_width=True):
                     if len(new_pwd) >= 3:
-                        pwd_to_save = hash_password(new_pwd) if 'hash_password' in globals() else new_pwd
-                        db_execute("UPDATE Users SET password=%s WHERE username=%s", (pwd_to_save, st.session_state['username']))
+                        db_execute("UPDATE Users SET password=%s WHERE username=%s", (hash_password(new_pwd), st.session_state['username']))
                         log_event("تغيير كلمة المرور", "قام المستخدم بتحديث كلمة المرور الخاصة به")
                         st.success("تم التغيير بنجاح! احتفظ بها.")
                     else:
@@ -352,57 +611,60 @@ def render_sidebar(role_title):
 
 def render_smart_alerts():
     ensure_shareholders_union_schema()
-    conn = get_db_connection()
     today = get_egypt_time()
     alerts = []
 
     try:
-        esc_owner_df = pd.read_sql_query("SELECT client_name, project_name, quarter_name, amount, COALESCE(currency, 'ج.م (EGP)') as currency FROM UnitInstallments WHERE collection_stage = 'محول للمالك (لتدخل الإدارة العليا)' AND status NOT IN ('مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر', 'ملغي (تم تقسيم الربع)')", conn)
-        for _, row in esc_owner_df.iterrows():
-            alerts.append(f"🚨 **تدخل المالك عاجل:** المساهم ({row['client_name']}) في ({row['project_name']} - {row['quarter_name']}) متأخر في سداد ({row['amount']:,.0f} {row['currency']}) وتم تصعيده للمالك!")
-    except:
-        pass
+        conn = get_db_connection()
+        try:
+            esc_owner_df = pd.read_sql_query("SELECT client_name, project_name, quarter_name, amount, COALESCE(currency, 'ج.م (EGP)') as currency FROM UnitInstallments WHERE collection_stage = 'محول للمالك (لتدخل الإدارة العليا)' AND status NOT IN ('مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر', 'ملغي (تم تقسيم الربع)')", conn)
+            for _, row in esc_owner_df.iterrows():
+                alerts.append(f"🚨 **تدخل المالك عاجل:** المساهم ({row['client_name']}) في ({row['project_name']} - {row['quarter_name']}) متأخر في سداد ({row['amount']:,.0f} {row['currency']}) وتم تصعيده للمالك!")
+        except Exception:
+            pass
 
-    try:
-        split_pending = pd.read_sql_query("SELECT shareholder_name, project_name, quarter_name, split_count, original_amount, currency FROM QuarterSplitRequests WHERE status = 'بانتظار موافقة المالك'", conn)
-        for _, row in split_pending.iterrows():
-            alerts.append(f"👑 **طلب استثناء تقسيم ربع تنفيذ:** المساهم ({row['shareholder_name']} - {row['project_name']}) يطلب استثناء لتقسيم ({row['quarter_name']}) بقيمة ({row['original_amount']:,.0f} {row['currency']}) على ({row['split_count']} دفعات) بانتظار موافقة المالك!")
-    except:
-        pass
+        try:
+            split_pending = pd.read_sql_query("SELECT shareholder_name, project_name, quarter_name, split_count, original_amount, currency FROM QuarterSplitRequests WHERE status = 'بانتظار موافقة المالك'", conn)
+            for _, row in split_pending.iterrows():
+                alerts.append(f"👑 **طلب استثناء تقسيم ربع تنفيذ:** المساهم ({row['shareholder_name']} - {row['project_name']}) يطلب استثناء لتقسيم ({row['quarter_name']}) بقيمة ({row['original_amount']:,.0f} {row['currency']}) على ({row['split_count']} دفعات) بانتظار موافقة المالك!")
+        except Exception:
+            pass
 
-    try:
-        lic_df = pd.read_sql_query("SELECT license_name, project_name, due_date FROM ProjectLicenses WHERE status != 'منتهية'", conn)
-        for _, row in lic_df.iterrows():
-            try:
-                d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
-                days_left = (d_date - today).days
-                if 0 <= days_left <= 15:
-                    alerts.append(f"⚠️ **تنبيه ترخيص:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) سينتهي خلال {days_left} أيام!")
-                elif days_left < 0:
-                    alerts.append(f"❌ **ترخيص منتهي:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) انتهى منذ {-days_left} أيام!")
-            except:
-                pass
-    except:
-        pass
+        try:
+            lic_df = pd.read_sql_query("SELECT license_name, project_name, due_date FROM ProjectLicenses WHERE status != 'منتهية'", conn)
+            for _, row in lic_df.iterrows():
+                try:
+                    d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
+                    days_left = (d_date - today).days
+                    if 0 <= days_left <= 15:
+                        alerts.append(f"⚠️ **تنبيه ترخيص:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) سينتهي خلال {days_left} أيام!")
+                    elif days_left < 0:
+                        alerts.append(f"❌ **ترخيص منتهي:** الترخيص '{row['license_name']}' لمشروع ({row['project_name']}) انتهى منذ {-days_left} أيام!")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
-    try:
-        fin_df = pd.read_sql_query("SELECT installment_type, project_name, due_date, category, shareholder_name FROM ProjectFinancials WHERE status IN ('مستحق (لم يُدفع)', 'متأخر')", conn)
-        for _, row in fin_df.iterrows():
-            try:
-                d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
-                days_left = (d_date - today).days
-                cat_label = row['category'] if pd.notna(row['category']) else 'قسط'
-                sh_label = f" - المساهم: {row['shareholder_name']}" if pd.notna(row['shareholder_name']) and row['shareholder_name'] != 'الشركة' else ""
-                if 0 <= days_left <= 10:
-                    alerts.append(f"💸 **تنبيه مالي ({cat_label}):** '{row['installment_type']}' لمشروع ({row['project_name']}{sh_label}) يستحق خلال {days_left} أيام!")
-                elif days_left < 0:
-                    alerts.append(f"🚨 **متأخرات ({cat_label}):** '{row['installment_type']}' لمشروع ({row['project_name']}{sh_label}) متأخر منذ {-days_left} أيام!")
-            except:
-                pass
-    except:
-        pass
+        try:
+            fin_df = pd.read_sql_query("SELECT installment_type, project_name, due_date, category, shareholder_name FROM ProjectFinancials WHERE status IN ('مستحق (لم يُدفع)', 'متأخر')", conn)
+            for _, row in fin_df.iterrows():
+                try:
+                    d_date = datetime.strptime(row['due_date'], "%Y/%m/%d").replace(tzinfo=pytz.timezone('Africa/Cairo'))
+                    days_left = (d_date - today).days
+                    cat_label = row['category'] if pd.notna(row['category']) else 'قسط'
+                    sh_label = f" - المساهم: {row['shareholder_name']}" if pd.notna(row['shareholder_name']) and row['shareholder_name'] != 'الشركة' else ""
+                    if 0 <= days_left <= 10:
+                        alerts.append(f"💸 **تنبيه مالي ({cat_label}):** '{row['installment_type']}' لمشروع ({row['project_name']}{sh_label}) يستحق خلال {days_left} أيام!")
+                    elif days_left < 0:
+                        alerts.append(f"🚨 **متأخرات ({cat_label}):** '{row['installment_type']}' لمشروع ({row['project_name']}{sh_label}) متأخر منذ {-days_left} أيام!")
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
-    conn.close()
+        conn.close()
+    except Exception:
+        pass
 
     if alerts:
         with st.expander("🔔 اضغط هنا لرؤية التنبيهات الذكية الهامة!", expanded=True):
@@ -500,7 +762,6 @@ def render_department_exemption_manager(department_filter="الكل"):
 # 3. لوحة القيادة وكشف أسماء الحاضرين والغائبين وإسناد المهام
 # ==========================================
 def render_present_and_absent_employees_widget(key_prefix="dash_"):
-    """عرض تفصيلي لأسماء الموظفين الحاضرين والغائبين للمالك والأدمن"""
     st.subheader("👥 كشف أسماء الموظفين الحاضرين والغائبين")
     col_dt, col_dept_f = st.columns([1, 2])
     sel_date = col_dt.date_input("📅 اختر التاريخ لعرض الحاضرين والغائبين:", value=get_egypt_time().date(), key=f"{key_prefix}att_dt")
@@ -533,7 +794,6 @@ def render_present_and_absent_employees_widget(key_prefix="dash_"):
     present_ids = set(att_day_df['emp_id'].dropna().astype(str).tolist()) if not att_day_df.empty else set()
     all_emps_df['emp_id_str'] = all_emps_df['emp_id'].astype(str)
 
-    # 1. جدول الحاضرين
     present_df = pd.merge(
         all_emps_df[all_emps_df['emp_id_str'].isin(present_ids)],
         att_day_df,
@@ -541,7 +801,6 @@ def render_present_and_absent_employees_widget(key_prefix="dash_"):
         how='inner'
     )
 
-    # 2. جدول الغائبين
     absent_df = all_emps_df[~all_emps_df['emp_id_str'].isin(present_ids)].copy()
     perm_map = {}
     if not perms_day_df.empty:
@@ -589,7 +848,7 @@ def render_company_dashboard():
         total_emps = int(db_fetchone("SELECT COUNT(*) FROM Employees")[0])
         present_today = int(db_fetchone("SELECT COUNT(DISTINCT emp_id) FROM WebAttendance WHERE date=%s AND action='حضور'", (today,))[0])
         pending_reqs = int(db_fetchone("SELECT COUNT(*) FROM Requests WHERE status='قيد الانتظار'")[0])
-    except:
+    except Exception:
         total_emps = 0
         present_today = 0
         pending_reqs = 0
@@ -600,7 +859,6 @@ def render_company_dashboard():
     c4.metric("🔔 طلبات معلقة", pending_reqs)
 
     st.divider()
-    # عرض كشف أسماء الحاضرين والغائبين مباشرة في لوحة القيادة للمالك والأدمن
     render_present_and_absent_employees_widget(key_prefix="main_dash_")
 
     st.divider()
@@ -701,7 +959,7 @@ def render_attendance_report(department_filter=None):
                 try:
                     parts = val.split(":")
                     total_mins += int(parts[0]) * 60 + int(parts[1])
-                except:
+                except Exception:
                     pass
                     
         total_str = f"{total_mins // 60}:{(total_mins % 60):02d} ساعة"
@@ -824,7 +1082,7 @@ def render_manage_extracts():
         else:
             emp_dept = ""
             sec_dept = ""
-    except:
+    except Exception:
         emp_dept = ""
         sec_dept = ""
         
@@ -851,7 +1109,7 @@ def render_manage_extracts():
                         try:
                             decoded_bytes = base64.b64decode(file_content)
                             st.download_button("📥 تحميل المستخلص للمراجعة", data=decoded_bytes, file_name=f"{row['extract_name']}.pdf", mime="application/octet-stream", key=f"dl_mng_ext_{row['id']}")
-                        except:
+                        except Exception:
                             pass
                     else:
                         st.info("لا يوجد ملف مرفق.")
@@ -992,7 +1250,6 @@ def render_quarter_split_exception_module(mode="sales", key_prefix=""):
         split_reqs_df = pd.DataFrame()
     conn.close()
 
-    # 1. قسم اعتماد مالك الشركة (Owner Only)
     if is_owner and not split_reqs_df.empty:
         pending_splits = split_reqs_df[split_reqs_df['status'] == 'بانتظار موافقة المالك']
         if not pending_splits.empty:
@@ -1013,7 +1270,7 @@ def render_quarter_split_exception_module(mode="sales", key_prefix=""):
                         base_due_str = orig_inst[0] if orig_inst and orig_inst[0] else get_egypt_time().strftime("%Y/%m/%d")
                         try:
                             base_due_dt = datetime.strptime(base_due_str, "%Y/%m/%d")
-                        except:
+                        except Exception:
                             base_due_dt = get_egypt_time()
 
                         db_execute(
@@ -1051,7 +1308,6 @@ def render_quarter_split_exception_module(mode="sales", key_prefix=""):
                         st.rerun()
             st.divider()
 
-    # 2. نموذج تقديم طلب استثناء لتقسيم ربع تنفيذ (متاح لخدمة العملاء فقط)
     if is_sales:
         with st.form(f"{key_prefix}req_quarter_split_form"):
             st.markdown("#### 📝 تقديم طلب استثناء لمالك الشركة لتقسيم ربع تنفيذ لمساهم (خاص بخدمة العملاء)")
@@ -1110,7 +1366,6 @@ def render_unit_resale_module(mode="sales"):
 #    (إضافة العملاء والأقساط حصرية لخدمة العملاء sales فقط)
 # ==========================================
 def calculate_shareholder_priority_ranking(sh_df, inst_df, project_filter="الكل"):
-    """ترتيب الملاك المساهمين آلياً حسب أسبقية السداد الفعلي ونسبة الالتزام لتحديد أولوية اختيار الوحدات المميزة"""
     if sh_df.empty:
         return pd.DataFrame()
 
@@ -1144,7 +1399,7 @@ def calculate_shareholder_priority_ranking(sh_df, inst_df, project_filter="ال�
                         p_dt = datetime.strptime(p_dt_str[:10], "%Y/%m/%d")
                         d_dt = datetime.strptime(d_dt_str[:10], "%Y/%m/%d")
                         speed_days_list.append((p_dt - d_dt).days)
-                    except:
+                    except Exception:
                         pass
 
         avg_delay_days = sum(speed_days_list) / len(speed_days_list) if speed_days_list else 9999.0
@@ -1201,7 +1456,7 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
     is_legal = (mode == "legal")
     is_owner = (mode == "owner")
     
-    # صلاحية إضافة العملاء/الملاك وجدولة الأقساط حصرية لخدمة العملاء (sales) فقط!
+    # صلاحية إضافة العملاء/الملاك وجدولة الأقساط حصرية لخدمة العملاء (sales) فقط
     can_add_clients_or_installments = is_sales
     
     st.header("🤝 منظومة اتحاد الملاك المساهمين، الأرباع الـ 4، وأولوية اختيار الوحدات")
@@ -1235,9 +1490,6 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
         inst_df = pd.DataFrame(columns=['id', 'project_name', 'unit_code', 'client_name', 'phase_name', 'quarter_name', 'amount', 'currency', 'due_date', 'paid_date', 'status', 'notes', 'collection_stage', 'call_notes', 'is_split_exception'])
     conn.close()
 
-    # =========================================================
-    # التبويب 1: أولوية اختيار الوحدات المميزة + كشف حساب المساهم
-    # =========================================================
     with crm_tabs[0]:
         st.subheader("🥇 ترتيب أولوية الملاك المساهمين لاختيار الوحدات المميزة (حسب أسبقية السداد)")
         st.info("💡 يرتب النظام الملاك المساهمين داخل كل اتحاد آلياً بناءً على **نسبة الالتزام، السداد الكامل للربع بدون تقسيم، وأسبقية تاريخ السداد الفعلي**، بحيث يحصل المالك الأسرع التزاماً وسداداً على **الأولوية رقم (1) 🥇** عند تقسيم الأرض واختيار الوحدات المميزة.")
@@ -1293,8 +1545,6 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
             tot_paid = float(sh_inst_active[sh_inst_active['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر'])]['amount'].fillna(0).sum()) if not sh_inst_active.empty else 0.0
             tot_rem = max(0.0, tot_req - tot_paid)
 
-            badge_text, _, _, _ = evaluate_client_commitment(sh_inst_active)
-
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("📐 نسبة المشاركة في الأرض", f"{sh_pct_val:.2f}% ({sh_proj_val})")
             m2.metric("💰 إجمالي مطالبات الأرباع والأرض", f"{tot_req:,.2f} {main_curr}")
@@ -1327,10 +1577,6 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                     key=f"{key_prefix}dl_sh_stmt_btn"
                 )
 
-    # =========================================================
-    # التبويب 2: مراحل التنفيذ والأرباع الـ 4 والتحصيل والتصعيد
-    #            (إضافة وجدولة الأقساط متاحة لخدمة العملاء sales فقط!)
-    # =========================================================
     with crm_tabs[1]:
         st.subheader("🏗️ مراحل التنفيذ (الأرباع الـ 4) ومتابعة التحصيل والتصعيد")
         
@@ -1511,16 +1757,9 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
         else:
             st.info("لا توجد مطالبات أرباع تنفيذ مسجلة بعد.")
 
-    # =========================================================
-    # التبويب 3: استثناء المالك لتقسيم ربع التنفيذ (على دفعتين أو 3)
-    # =========================================================
     with crm_tabs[2]:
         render_quarter_split_exception_module(mode=mode, key_prefix=key_prefix)
 
-    # =========================================================
-    # التبويب 4: سجل الملاك المساهمين وحصص الأرض (%)
-    #            (إضافة وتعديل وحذف الملاك/العملاء حصري لخدمة العملاء sales فقط!)
-    # =========================================================
     with crm_tabs[3]:
         st.subheader("🤝 سجل الملاك المساهمين وحصص المشاركة في الأرض (%)")
         if can_add_clients_or_installments:
@@ -1558,7 +1797,7 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                         
                         try:
                             db_execute("INSERT INTO Clients (name, phone, national_id, address, notes) VALUES (%s, %s, %s, %s, %s)", (sh_name.strip(), sh_phone.strip(), sh_nid.strip(), sh_proj, f"مساهم بنسبة {sh_pct}%"))
-                        except:
+                        except Exception:
                             pass
 
                         log_event("تسجيل مالك مساهم (خدمة عملاء)", f"المساهم: {sh_name} - {sh_proj} - نسبة الأرض: {sh_pct}% - قيمة: {sh_land_amt} {sh_curr}")
@@ -1617,26 +1856,26 @@ def render_employee_dashboard(emp_id, balance):
     try:
         is_exempt = db_fetchone("SELECT exempt_report FROM Employees WHERE emp_id=%s", (emp_id,))
         is_exempt = is_exempt[0] if is_exempt and is_exempt[0] is not None else False
-    except:
+    except Exception:
         is_exempt = False
         
     try:
         used_leaves_year = db_fetchone("SELECT COUNT(*) FROM Permissions WHERE emp_id=%s AND type='إجازة' AND date LIKE %s", (emp_id, f"{current_year}/%"))[0]
-    except:
+    except Exception:
         used_leaves_year = 0
     
     try:
         has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
         if not has_checked_in and (now_dt.hour > 11 or (now_dt.hour == 11 and now_dt.minute >= 30)):
             st.error("⏰ **تنبيه عاجل:** لقد تجاوزت الساعة 11:30 صباحاً ولم تقم بتسجيل حضورك اليوم! يرجى إثبات الحضور فوراً لتجنب خصم اليوم.")
-    except:
+    except Exception:
         pass
 
     try:
         pending_tasks = db_fetchone("SELECT COUNT(*) FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", (emp_id,))[0]
         if pending_tasks > 0:
             st.warning(f"🔔 **تنبيه عمل:** لديك ({pending_tasks}) مهمة مسندة بانتظار إنجازها! راجع قسم 'بصمة وتقارير'.")
-    except:
+    except Exception:
         pass
 
     c1, c2, c3, c4 = st.columns(4)
@@ -1647,7 +1886,7 @@ def render_employee_dashboard(emp_id, balance):
     try:
         pending = db_fetchone("SELECT COUNT(*) FROM Requests WHERE emp_id=%s AND status='قيد الانتظار'", (emp_id,))[0]
         c4.metric("طلبات معلقة", pending)
-    except:
+    except Exception:
         c4.metric("طلبات معلقة", 0)
     
     st.divider()
@@ -1691,7 +1930,7 @@ def render_employee_dashboard(emp_id, balance):
                         
                         try:
                             has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
-                        except:
+                        except Exception:
                             has_checked_in = False
 
                         if not has_checked_in:
@@ -1706,7 +1945,7 @@ def render_employee_dashboard(emp_id, balance):
                             conn = get_db_connection()
                             try:
                                 tasks = pd.read_sql_query("SELECT id, assigner, project_name, task_desc, due_date FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", conn, params=(emp_id,))
-                            except:
+                            except Exception:
                                 tasks = pd.DataFrame()
                             conn.close()
                             
@@ -1778,7 +2017,7 @@ def render_employee_dashboard(emp_id, balance):
         conn = get_db_connection()
         try:
             df = pd.read_sql_query("SELECT id, date, req_type, status FROM Requests WHERE emp_id=%s ORDER BY id DESC", conn, params=(emp_id,))
-        except:
+        except Exception:
             df = pd.DataFrame()
         conn.close()
         
