@@ -75,36 +75,40 @@ else:
     if role in ['owner', 'admin']:
         st.title(f"👑 لوحة القيادة العليا ({role_title})")
         nav_tabs = st.tabs([
-            "🏠 لوحتي الشخصية (البصمة)",
-            "📊 المؤشرات والأمان وتنظيف أول الشهر",
-            "🤝 اتحاد الملاك والأرباع والأولوية",
+            "📊 المؤشرات والحاضرين والغائبين",
+            "📋 إسناد مهام لأي موظف بالشركة",
+            "🤝 متابعة اتحاد الملاك واعتماد الاستثناءات",
             "💰 أقساط الجهاز والمالية",
             "📄 رادار المستخلصات الهندسية",
-            "👥 الموظفين والـ HR والحضور",
-            "⚙️ إعدادات النظام والـ Logs"
+            "👥 تقارير الحضور والـ HR",
+            "🏠 لوحتي الشخصية (البصمة)",
+            "⚙️ الأمان والـ Logs"
         ])
         
         with nav_tabs[0]:
-            render_employee_dashboard(emp_id, balance)
-        with nav_tabs[1]:
             render_company_dashboard()
+        with nav_tabs[1]:
+            render_task_delegation("الكل")
         with nav_tabs[2]:
+            # المالك يطلع ويعتمد الاستثناءات فقط، ولا يضيف عملاء أو أقساط (خدمة العملاء فقط تضيف)
             render_clients_and_crm_module(mode="owner", key_prefix="own_crm_")
         with nav_tabs[3]:
             render_financials_module(can_edit=True)
         with nav_tabs[4]:
             render_manage_extracts()
         with nav_tabs[5]:
-            hr_sub = st.tabs(["📸 سجل الحضور والانصراف", "🌴 أرصدة الإجازات السنوية", "🛡️ إعفاء التقارير اليومية", "📋 إسناد المهام"])
+            hr_sub = st.tabs(["🟢 كشف الحاضرين والغائبين", "📸 سجل الحضور التفصيلي", "🌴 أرصدة الإجازات السنوية", "🛡️ إعفاء التقارير اليومية"])
             with hr_sub[0]:
-                render_attendance_report()
+                render_present_and_absent_employees_widget(key_prefix="hr_sub_")
             with hr_sub[1]:
-                render_leave_balance_management()
+                render_attendance_report()
             with hr_sub[2]:
-                render_department_exemption_manager("الكل")
+                render_leave_balance_management()
             with hr_sub[3]:
-                render_task_delegation("الكل")
+                render_department_exemption_manager("الكل")
         with nav_tabs[6]:
+            render_employee_dashboard(emp_id, balance)
+        with nav_tabs[7]:
             render_security_and_backup_center()
             st.divider()
             st.subheader("🕵️ سجل مراقبة العمليات (Audit Logs)")
@@ -114,46 +118,46 @@ else:
             st.dataframe(logs_df, use_container_width=True, hide_index=True)
 
     # ==========================================
-    # 2. لوحة خدمة العملاء والمبيعات (اتحاد الملاك)
+    # 2. لوحة خدمة العملاء والمبيعات (الجهة الوحيدة المخولة بإضافة الملاك والأقساط)
     # ==========================================
     elif role == 'sales':
         st.title("🤝 إدارة اتحاد الملاك المساهمين وخدمة العملاء")
-        tabs = st.tabs(["🏠 لوحتي الشخصية (البصمة)", "🤝 منظومة اتحاد الملاك والأرباع والأولوية"])
+        tabs = st.tabs(["🤝 منظومة اتحاد الملاك وإضافة العملاء والأقساط", "🏠 لوحتي الشخصية (البصمة)"])
         with tabs[0]:
-            render_employee_dashboard(emp_id, balance)
-        with tabs[1]:
             render_clients_and_crm_module(mode="sales", key_prefix="sales_")
+        with tabs[1]:
+            render_employee_dashboard(emp_id, balance)
 
     # ==========================================
-    # 3. لوحة الحسابات والمالية (Accountant)
+    # 3. لوحة الحسابات والمالية (Accountant) - بدون صلاحية إضافة عملاء أو أقساط لهم
     # ==========================================
     elif role == 'accountant':
         st.title("💰 الإدارة المالية والحسابات")
         tabs = st.tabs([
-            "🏠 لوحتي الشخصية (البصمة)",
-            "🤝 حسابات اتحاد الملاك والأرباع الـ 4",
+            "🤝 متابعة تحصيل اتحاد الملاك والأرباع",
             "🏛️ أقساط الجهاز والالتزامات",
-            "📄 صرف المستخلصات المعتمدة"
+            "📄 صرف المستخلصات المعتمدة",
+            "🏠 لوحتي الشخصية (البصمة)"
         ])
         with tabs[0]:
-            render_employee_dashboard(emp_id, balance)
-        with tabs[1]:
             render_clients_and_crm_module(mode="accountant", key_prefix="acc_")
-        with tabs[2]:
+        with tabs[1]:
             render_financials_module(can_edit=True)
-        with tabs[3]:
+        with tabs[2]:
             render_manage_extracts()
+        with tabs[3]:
+            render_employee_dashboard(emp_id, balance)
 
     # ==========================================
     # 4. لوحة الشؤون القانونية (Legal)
     # ==========================================
     elif role == 'legal':
         st.title("⚖️ إدارة العقود والشؤون القانونية")
-        tabs = st.tabs(["🏠 لوحتي الشخصية (البصمة)", "⚖️ متابعة المتأخرات واتحاد الملاك"])
+        tabs = st.tabs(["⚖️ متابعة المتأخرات واتحاد الملاك", "🏠 لوحتي الشخصية (البصمة)"])
         with tabs[0]:
-            render_employee_dashboard(emp_id, balance)
-        with tabs[1]:
             render_clients_and_crm_module(mode="legal", key_prefix="leg_")
+        with tabs[1]:
+            render_employee_dashboard(emp_id, balance)
 
     # ==========================================
     # 5. لوحة الموارد البشرية (HR) أو المدير الإداري
@@ -161,13 +165,14 @@ else:
     elif role in ['hr', 'admin_manager']:
         st.title("👥 إدارة الموارد البشرية والشؤون الإدارية")
         tabs = st.tabs([
-            "🏠 لوحتي الشخصية (البصمة)",
+            "🟢 كشف الحاضرين والغائبين اليوم",
             "📸 تقارير الحضور والانصراف",
             "🌴 إدارة أرصدة الإجازات السنوية",
-            "📤 رفع شيت البصمة الشهري"
+            "📤 رفع شيت البصمة الشهري",
+            "🏠 لوحتي الشخصية (البصمة)"
         ])
         with tabs[0]:
-            render_employee_dashboard(emp_id, balance)
+            render_present_and_absent_employees_widget(key_prefix="hr_main_")
         with tabs[1]:
             render_attendance_report()
         with tabs[2]:
@@ -178,6 +183,8 @@ else:
                 res_df = process_excel(uploaded_xl)
                 if not res_df.empty:
                     st.dataframe(res_df, use_container_width=True, hide_index=True)
+        with tabs[4]:
+            render_employee_dashboard(emp_id, balance)
 
     # ==========================================
     # 6. لوحة رؤساء الأقسام والمهندسين وبقية الموظفين
