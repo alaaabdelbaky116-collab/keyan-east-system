@@ -29,6 +29,23 @@ CURRENCY_OPTIONS = [
     "يورو (EUR)"
 ]
 
+EXECUTION_PHASES = [
+    "حصة شراء الأرض / الجهاز",
+    "المرحلة الأولى (الحفر والأساسات)",
+    "المرحلة الثانية (الهيكل الخرساني)",
+    "المرحلة الثالثة (المباني والتأسيس)",
+    "المرحلة الرابعة (التشطيبات والواجهات)",
+    "المرحلة الخامسة (المرافق والتسليم)"
+]
+
+QUARTERS_LIST = [
+    "الربع الأول (Q1)",
+    "الربع الثاني (Q2)",
+    "الربع الثالث (Q3)",
+    "الربع الرابع (Q4)",
+    "دفعة أرض / جهاز"
+]
+
 COMPANY_DEPARTMENTS = [
     "اتش ار (HR)", "مبيعات وخدمة عملاء", "عقود قانونية", "تراخيص", "حسابات", 
     "مهندسين مكتب فني", "مهندسين إدارة وتخطيط", "مهندسين تنفيذ", 
@@ -54,7 +71,7 @@ ROLE_MAP = {
 ROLE_REVERSE_MAP = {v: k for k, v in ROLE_MAP.items()}
 DISPLAY_MAP = {
     "none": "لا يوجد", "employee": "موظف عادي", "manager": "رئيس قسم", "admin_manager": "مدير إداري", 
-    "hr": "موارد بشرية", "sales": "مبيعات", "legal": "عقود قانونية", "engineer": "مهندس", 
+    "hr": "موارد بشرية", "sales": "مبيعات وخدمة ملاك", "legal": "عقود قانونية", "engineer": "مهندس", 
     "planning_engineer": "مهندس إدارة وتخطيط", "extracts_engineer": "مهندس مستخلصات", 
     "accountant": "محاسب", "licensing": "مسؤول تراخيص", "it": "مهندس IT", 
     "admin": "مسؤول نظام", "owner": "المالك"
@@ -127,10 +144,10 @@ def log_event(action_type, details=""):
         pass
 
 # ==========================================
-# 3. تهيئة وتحديث الجداول تلقائياً (شامل العملة والأمان)
+# 3. تهيئة وتحديث الجداول تلقائياً (منظومة اتحاد الملاك والأرباع)
 # ==========================================
 @st.cache_resource
-def setup_database_v6():
+def setup_database_v7():
     try:
         conn = get_db_connection()
         conn.autocommit = True
@@ -143,14 +160,15 @@ def setup_database_v6():
         cur.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Locations (id SERIAL PRIMARY KEY, name TEXT, lat REAL, lon REAL, radius REAL)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS WebAttendance (id SERIAL PRIMARY KEY, emp_id TEXT, date TEXT, time TEXT, action TEXT, distance REAL, location_name TEXT, photo TEXT, project_name TEXT, daily_report TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS ProjectFinancials (id SERIAL PRIMARY KEY, project_name TEXT, installment_type TEXT, amount REAL, currency TEXT DEFAULT 'ج.م (EGP)', due_date TEXT, status TEXT, category TEXT DEFAULT 'قسط جهاز', shareholder_name TEXT DEFAULT 'الشركة', share_percentage REAL DEFAULT 100.0, notes TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS ProjectFinancials (id SERIAL PRIMARY KEY, project_name TEXT, installment_type TEXT, amount REAL, currency TEXT DEFAULT 'ج.م (EGP)', due_date TEXT, status TEXT, category TEXT DEFAULT 'قسط جهاز', shareholder_name TEXT DEFAULT 'الشركة', share_percentage REAL DEFAULT 100.0, phase_name TEXT DEFAULT 'المرحلة الأولى (الحفر والأساسات)', quarter_name TEXT DEFAULT 'الربع الأول (Q1)', notes TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id SERIAL PRIMARY KEY, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT, file_data TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT, file_data TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT, impediment_notes TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, name TEXT, phone TEXT, national_id TEXT, address TEXT, notes TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS RealEstateUnits (id SERIAL PRIMARY KEY, project_name TEXT, unit_code TEXT, status TEXT, client_name TEXT, total_price REAL, currency TEXT DEFAULT 'ج.م (EGP)', notes TEXT, contract_file TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS UnitInstallments (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, amount REAL, currency TEXT DEFAULT 'ج.م (EGP)', due_date TEXT, paid_date TEXT, status TEXT, notes TEXT, collection_stage TEXT DEFAULT 'متابعة خدمة العملاء', call_notes TEXT DEFAULT '')''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, name TEXT, phone TEXT, national_id TEXT, address TEXT, project_name TEXT DEFAULT 'اتحاد 1', share_percentage REAL DEFAULT 0.0, land_share_amount REAL DEFAULT 0.0, currency TEXT DEFAULT 'ج.م (EGP)', notes TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS RealEstateUnits (id SERIAL PRIMARY KEY, project_name TEXT, unit_code TEXT, unit_category TEXT DEFAULT '🌟 وحدة مميزة (أولوية السداد المبكر)', status TEXT, client_name TEXT, total_price REAL, currency TEXT DEFAULT 'ج.م (EGP)', notes TEXT, contract_file TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS UnitInstallments (id SERIAL PRIMARY KEY, project_name TEXT DEFAULT 'اتحاد 1', unit_code TEXT, client_name TEXT, phase_name TEXT DEFAULT 'المرحلة الأولى (الحفر والأساسات)', quarter_name TEXT DEFAULT 'الربع الأول (Q1)', payment_mode TEXT DEFAULT 'دفعة واحدة (الأصل)', amount REAL, currency TEXT DEFAULT 'ج.م (EGP)', due_date TEXT, paid_date TEXT, status TEXT, notes TEXT, collection_stage TEXT DEFAULT 'متابعة خدمة العملاء', call_notes TEXT DEFAULT '')''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS QuarterSplitExceptions (id SERIAL PRIMARY KEY, project_name TEXT, owner_name TEXT, share_percentage REAL, phase_name TEXT, quarter_name TEXT, total_quarter_amount REAL, currency TEXT DEFAULT 'ج.م (EGP)', splits_count INTEGER DEFAULT 2, due_date_1 TEXT, due_date_2 TEXT, due_date_3 TEXT, reason TEXT, requested_by TEXT, request_date TEXT, status TEXT DEFAULT 'بانتظار استثناء مالك الشركة', owner_notes TEXT DEFAULT '')''')
         cur.execute('''CREATE TABLE IF NOT EXISTS UnitResaleRequests (id SERIAL PRIMARY KEY, unit_code TEXT, project_name TEXT, old_client_name TEXT, old_price REAL, new_evaluated_price REAL, currency TEXT DEFAULT 'ج.م (EGP)', reason TEXT, requested_by TEXT, request_date TEXT, status TEXT DEFAULT 'بانتظار موافقة المالك', owner_notes TEXT DEFAULT '')''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Cheques (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, cheque_number TEXT, amount REAL, currency TEXT DEFAULT 'ج.م (EGP)', due_date TEXT, file_data TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS AuditLogs (id SERIAL PRIMARY KEY, log_time TEXT, username TEXT, role TEXT, action_type TEXT, details TEXT)''')
@@ -168,11 +186,18 @@ def setup_database_v6():
             "ALTER TABLE RealEstateUnits ADD COLUMN total_price REAL DEFAULT 0.0",
             "ALTER TABLE RealEstateUnits ADD COLUMN client_name TEXT",
             "ALTER TABLE RealEstateUnits ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'",
+            "ALTER TABLE RealEstateUnits ADD COLUMN unit_category TEXT DEFAULT '🌟 وحدة مميزة (أولوية السداد المبكر)'",
             "ALTER TABLE ProjectFinancials ADD COLUMN category TEXT DEFAULT 'قسط جهاز'",
             "ALTER TABLE ProjectFinancials ADD COLUMN shareholder_name TEXT DEFAULT 'الشركة'",
             "ALTER TABLE ProjectFinancials ADD COLUMN share_percentage REAL DEFAULT 100.0",
+            "ALTER TABLE ProjectFinancials ADD COLUMN phase_name TEXT DEFAULT 'المرحلة الأولى (الحفر والأساسات)'",
+            "ALTER TABLE ProjectFinancials ADD COLUMN quarter_name TEXT DEFAULT 'الربع الأول (Q1)'",
             "ALTER TABLE ProjectFinancials ADD COLUMN notes TEXT",
             "ALTER TABLE ProjectFinancials ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'",
+            "ALTER TABLE UnitInstallments ADD COLUMN project_name TEXT DEFAULT 'اتحاد 1'",
+            "ALTER TABLE UnitInstallments ADD COLUMN phase_name TEXT DEFAULT 'المرحلة الأولى (الحفر والأساسات)'",
+            "ALTER TABLE UnitInstallments ADD COLUMN quarter_name TEXT DEFAULT 'الربع الأول (Q1)'",
+            "ALTER TABLE UnitInstallments ADD COLUMN payment_mode TEXT DEFAULT 'دفعة واحدة (الأصل)'",
             "ALTER TABLE UnitInstallments ADD COLUMN paid_date TEXT",
             "ALTER TABLE UnitInstallments ADD COLUMN notes TEXT",
             "ALTER TABLE UnitInstallments ADD COLUMN collection_stage TEXT DEFAULT 'متابعة خدمة العملاء'",
@@ -184,6 +209,10 @@ def setup_database_v6():
             "ALTER TABLE Clients ADD COLUMN phone TEXT",
             "ALTER TABLE Clients ADD COLUMN national_id TEXT",
             "ALTER TABLE Clients ADD COLUMN address TEXT",
+            "ALTER TABLE Clients ADD COLUMN project_name TEXT DEFAULT 'اتحاد 1'",
+            "ALTER TABLE Clients ADD COLUMN share_percentage REAL DEFAULT 0.0",
+            "ALTER TABLE Clients ADD COLUMN land_share_amount REAL DEFAULT 0.0",
+            "ALTER TABLE Clients ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'",
             "ALTER TABLE Clients ADD COLUMN notes TEXT",
             "ALTER TABLE AuditLogs ADD COLUMN log_time TEXT",
             "ALTER TABLE AuditLogs ADD COLUMN username TEXT",
@@ -203,11 +232,12 @@ def setup_database_v6():
         cur.close()
         conn.close()
         return True
-    except Exception as e:
+    except Exception:
         return False
 
-setup_database_v4 = setup_database_v6
-setup_database_v5 = setup_database_v6
+setup_database_v4 = setup_database_v7
+setup_database_v5 = setup_database_v7
+setup_database_v6 = setup_database_v7
 
 # ==========================================
 # 4. تسجيل الدخول المحمي ضد التخمين + التشفير التلقائي
@@ -267,7 +297,7 @@ def get_employee_stats(emp_id):
     return (None, 0.0, "", 0.0)
 
 # ==========================================
-# 5. دوال مراقبة مساحة Supabase والنسخ الاحتياطي وتفريغ الصور
+# 5. دوال مراقبة مساحة Supabase ومسح الصور أول كل شهر والنسخ الاحتياطي
 # ==========================================
 def get_database_size_info():
     try:
@@ -293,29 +323,44 @@ def get_database_size_info():
     except Exception:
         return 0.0, 0.0, pd.DataFrame()
 
-def cleanup_old_attendance_photos(days_to_keep=90):
-    cutoff_date = (get_egypt_time() - timedelta(days=int(days_to_keep))).strftime("%Y/%m/%d")
+def cleanup_previous_months_photos():
+    """مسح جميع صور البصمة الخاصة بالشهور السابقة (قبل يوم 1 في الشهر الحالي) مع الحفاظ على سجل الحضور"""
+    current_month_start = get_egypt_time().strftime("%Y/%m/01")
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute(
         "UPDATE WebAttendance SET photo='' WHERE date < %s AND photo IS NOT NULL AND photo != ''",
-        (cutoff_date,)
+        (current_month_start,)
     )
     affected = cur.rowcount
     conn.commit()
     cur.close()
     conn.close()
-    log_event("تفريغ صور البصمة القديمة", f"تم تفريغ صور {affected} سجل أقدم من {cutoff_date} لتوفير المساحة")
-    return affected
+    if affected > 0:
+        log_event("تنظيف صور أول الشهر", f"تم مسح صور البصمة لـ ({affected}) سجل قبل تاريخ {current_month_start}")
+    return affected, current_month_start
+
+def auto_check_first_of_month_cleanup():
+    """يعمل تلقائياً في أول كل شهر لتنظيف صور الشهر السابق دون تدخل يدوي"""
+    now = get_egypt_time()
+    current_ym = now.strftime("%Y/%m")
+    if st.session_state.get('last_auto_photo_clean_ym') != current_ym:
+        st.session_state['last_auto_photo_clean_ym'] = current_ym
+        if now.day <= 3:
+            try:
+                cleanup_previous_months_photos()
+            except:
+                pass
 
 def generate_full_backup_file():
     conn = get_db_connection()
     tables_to_export = {
-        "العملاء_Clients": "SELECT id, name, phone, national_id, address, notes FROM Clients ORDER BY id DESC",
-        "الوحدات_Units": "SELECT id, project_name, unit_code, status, client_name, total_price, currency, notes FROM RealEstateUnits ORDER BY id DESC",
-        "أقساط_العملاء_Installments": "SELECT id, unit_code, client_name, amount, currency, due_date, paid_date, status, collection_stage, call_notes, notes FROM UnitInstallments ORDER BY id DESC",
-        "إعادة_البيع_Resale": "SELECT id, unit_code, project_name, old_client_name, old_price, new_evaluated_price, currency, reason, requested_by, request_date, status, owner_notes FROM UnitResaleRequests ORDER BY id DESC",
-        "المالية_والمساهمين_Financials": "SELECT id, project_name, category, installment_type, shareholder_name, share_percentage, amount, currency, due_date, status, notes FROM ProjectFinancials ORDER BY id DESC",
+        "الملاك_المساهمين_Owners": "SELECT id, name, phone, national_id, project_name, share_percentage, land_share_amount, currency, address, notes FROM Clients ORDER BY id DESC",
+        "تخصيص_الوحدات_Units": "SELECT id, project_name, unit_code, unit_category, status, client_name, total_price, currency, notes FROM RealEstateUnits ORDER BY id DESC",
+        "دفعات_الأرباع_Installments": "SELECT id, project_name, unit_code, client_name, phase_name, quarter_name, payment_mode, amount, currency, due_date, paid_date, status, collection_stage, call_notes, notes FROM UnitInstallments ORDER BY id DESC",
+        "استثناءات_تقسيم_الأرباع": "SELECT id, project_name, owner_name, share_percentage, phase_name, quarter_name, total_quarter_amount, currency, splits_count, status, owner_notes FROM QuarterSplitExceptions ORDER BY id DESC",
+        "إعادة_التقييم_Resale": "SELECT id, unit_code, project_name, old_client_name, old_price, new_evaluated_price, currency, reason, requested_by, request_date, status, owner_notes FROM UnitResaleRequests ORDER BY id DESC",
+        "المالية_والجهاز_Financials": "SELECT id, project_name, category, phase_name, quarter_name, installment_type, shareholder_name, share_percentage, amount, currency, due_date, status, notes FROM ProjectFinancials ORDER BY id DESC",
         "الموظفين_Employees": "SELECT emp_id, name, department, secondary_department, annual_balance, phone, exempt_report FROM Employees ORDER BY emp_id",
         "الحضور_والتقارير_Attendance": "SELECT id, emp_id, date, time, action, distance, location_name, project_name, daily_report FROM WebAttendance ORDER BY id DESC",
         "المستخلصات_Extracts": "SELECT id, project_name, extract_name, amount, date, created_by, status, impediment_notes FROM Extracts ORDER BY id DESC",
@@ -352,7 +397,7 @@ def generate_full_backup_file():
         return zip_buffer.getvalue(), f"Keyan_Full_Backup_{get_egypt_time().strftime('%Y%m%d_%H%M')}.zip", "application/zip"
 
 # ==========================================
-# 6. دوال الحسابات والتقارير وتقييم العملاء
+# 6. دوال الحسابات والتقارير وتقييم أولوية الملاك
 # ==========================================
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000 
@@ -462,7 +507,7 @@ def generate_html_report(title, df, extra_summary_html=""):
 
 def evaluate_client_commitment(inst_df):
     if inst_df.empty:
-        return "⚪ لم يتم جدولة أقساط بعد", 100.0, 0, 0
+        return "⚪ لم يتم جدولة دفعات بعد", 100.0, 0, 0
         
     today_str = get_egypt_time().strftime("%Y/%m/%d")
     on_time_count = 0
@@ -490,18 +535,18 @@ def evaluate_client_commitment(inst_df):
                 evaluated_installments += 1
                 
     if evaluated_installments == 0:
-        return "🟢 منتظم (الأقساط لم يحن موعدها بعد)", 100.0, on_time_count, late_or_overdue_count
+        return "🟢 منتظم (الدفعات لم يحن موعدها بعد)", 100.0, on_time_count, late_or_overdue_count
         
     score = (on_time_count / evaluated_installments) * 100.0
     
     if score >= 90:
-        badge = f"🌟 عميل VIP ملتزم جداً ({score:.0f}%)"
+        badge = f"🥇 أولوية أولى للوحدات المميزة ({score:.0f}%)"
     elif score >= 70:
-        badge = f"👍 التزام جيد ({score:.0f}%)"
+        badge = f"🥈 أولوية ثانية - التزام جيد ({score:.0f}%)"
     elif score >= 50:
-        badge = f"⚠️ التزام متوسط - يحتاج متابعة ({score:.0f}%)"
+        badge = f"⚠️ التزام متوسط - يتأخر في الأرباع ({score:.0f}%)"
     else:
-        badge = f"🚨 عميل متعثر / متأخر السداد ({score:.0f}%)"
+        badge = f"🚨 مالك متأخر السداد - يفقد أولوية التميز ({score:.0f}%)"
         
     return badge, score, on_time_count, late_or_overdue_count
 
