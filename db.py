@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import base64
 import os
 import psycopg2
 import pytz
 import math
 import io
+import hashlib
+import zipfile
 
 # ==========================================
 # 1. الثوابت والقوائم الأساسية للنظام
@@ -17,6 +19,7 @@ OFFICIAL_OUT = '18:00'
 GRACE_PERIOD_MINS = 60
 REQUIRED_HOURS = 7
 DEFAULT_ANNUAL_BALANCE = 21
+SUPABASE_FREE_LIMIT_MB = 500.0
 
 CURRENCY_OPTIONS = [
     "ج.م (EGP)", 
@@ -58,7 +61,7 @@ DISPLAY_MAP = {
 }
 
 # ==========================================
-# 2. الاتصال بقاعدة البيانات وتسجيل الـ Logs
+# 2. الاتصال بقاعدة البيانات والتشفير والـ Logs
 # ==========================================
 try:
     DB_URL = st.secrets["DB_URL"]
@@ -101,6 +104,16 @@ def db_fetchall(query, params=()):
 def is_valid_file(val):
     return pd.notna(val) and isinstance(val, str) and len(val.strip()) > 10
 
+def hash_password(password_str):
+    if not password_str:
+        return ""
+    return hashlib.sha256(str(password_str).encode('utf-8')).hexdigest()
+
+def is_sha256_hash(val):
+    if not val or not isinstance(val, str) or len(val) != 64:
+        return False
+    return all(c in '0123456789abcdefABCDEF' for c in val)
+
 def log_event(action_type, details=""):
     try:
         user = st.session_state.get('username') or 'غير مسجل'
@@ -114,7 +127,7 @@ def log_event(action_type, details=""):
         pass
 
 # ==========================================
-# 3. تهيئة وتحديث الجداول تلقائياً (شامل العملة)
+# 3. تهيئة وتحديث الجداول تلقائياً (شامل العملة والأمان)
 # ==========================================
 @st.cache_resource
 def setup_database_v6():
@@ -193,12 +206,53 @@ def setup_database_v6():
     except Exception as e:
         return False
 
-# دعم التوافق مع أي إصدار في app.py
 setup_database_v4 = setup_database_v6
 setup_database_v5 = setup_database_v6
 
+# ==========================================
+# 4. تسجيل الدخول المحمي ضد التخمين + التشفير التلقائي
+# ==========================================
 def authenticate(username, password):
-    return db_fetchone("SELECT role, secondary_role, emp_id FROM Users WHERE username=%s AND password=%s", (username, password))
+    now = get_egypt_time()
+    lockout_until = st.session_state.get('lockout_until')
+    if lockout_until and now < lockout_until:
+        remaining_secs = int((lockout_until - now).total_seconds())
+        st.error(f"🔒 تم إيقاف محاولات الدخول مؤقتاً للحماية! يرجى الانتظار ({remaining_secs} ثانية).")
+        return None
+
+    hashed_in = hash_password(password)
+    res = db_fetchone(
+        "SELECT role, secondary_role, emp_id, password FROM Users WHERE username=%s AND (password=%s OR password=%s)",
+        (username, password, hashed_in)
+    )
+    if res:
+        st.session_state['failed_login_attempts'] = 0
+        st.session_state['lockout_until'] = None
+        stored_pwd = res[3]
+        if not is_sha256_hash(stored_pwd):
+            try:
+                db_execute("UPDATE Users SET password=%s WHERE username=%s", (hashed_in, username))
+            except:
+                pass
+        return (res[0], res[1], res[2])
+    else:
+        attempts = st.session_state.get('failed_login_attempts', 0) + 1
+        st.session_state['failed_login_attempts'] = attempts
+        if attempts >= 5:
+            st.session_state['lockout_until'] = now + timedelta(minutes=2)
+            log_event("حظر مؤقت (محاولات دخول فاشلة)", f"تم قفل الدخول مؤقتاً بعد 5 محاولات خاطئة على حساب: {username}")
+            st.error("🚨 تم إدخال كلمة المرور خطأ 5 مرات متتالية! تم قفل المحاولات لمدة دقيقتين لحماية الحساب.")
+        return None
+
+def encrypt_all_existing_passwords():
+    users = db_fetchall("SELECT username, password FROM Users")
+    count = 0
+    for uname, pwd in users:
+        if pwd and not is_sha256_hash(pwd):
+            db_execute("UPDATE Users SET password=%s WHERE username=%s", (hash_password(pwd), uname))
+            count += 1
+    log_event("تشفير كلمات المرور", f"تم تشفير {count} حساب بنظام SHA-256")
+    return count
 
 def get_employee_info(emp_id):
     res = db_fetchone("SELECT name, department, annual_balance FROM Employees WHERE emp_id=%s", (emp_id,))
@@ -213,7 +267,92 @@ def get_employee_stats(emp_id):
     return (None, 0.0, "", 0.0)
 
 # ==========================================
-# 4. دوال الحسابات والتقارير وتقييم العملاء
+# 5. دوال مراقبة مساحة Supabase والنسخ الاحتياطي وتفريغ الصور
+# ==========================================
+def get_database_size_info():
+    try:
+        res = db_fetchone("SELECT pg_database_size(current_database())")
+        size_bytes = float(res[0]) if res and res[0] else 0.0
+        size_mb = size_bytes / (1024 * 1024)
+        pct = min(100.0, (size_mb / SUPABASE_FREE_LIMIT_MB) * 100.0)
+        
+        tables_query = """
+            SELECT relname AS table_name,
+                   pg_total_relation_size(relid) AS total_bytes
+            FROM pg_catalog.pg_statio_user_tables
+            ORDER BY pg_total_relation_size(relid) DESC LIMIT 6;
+        """
+        t_rows = db_fetchall(tables_query)
+        table_breakdown = []
+        for t_name, t_bytes in t_rows:
+            table_breakdown.append({
+                "الجدول": t_name,
+                "المساحة (MB)": round(float(t_bytes) / (1024 * 1024), 2)
+            })
+        return round(size_mb, 2), round(pct, 1), pd.DataFrame(table_breakdown)
+    except Exception:
+        return 0.0, 0.0, pd.DataFrame()
+
+def cleanup_old_attendance_photos(days_to_keep=90):
+    cutoff_date = (get_egypt_time() - timedelta(days=int(days_to_keep))).strftime("%Y/%m/%d")
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE WebAttendance SET photo='' WHERE date < %s AND photo IS NOT NULL AND photo != ''",
+        (cutoff_date,)
+    )
+    affected = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    log_event("تفريغ صور البصمة القديمة", f"تم تفريغ صور {affected} سجل أقدم من {cutoff_date} لتوفير المساحة")
+    return affected
+
+def generate_full_backup_file():
+    conn = get_db_connection()
+    tables_to_export = {
+        "العملاء_Clients": "SELECT id, name, phone, national_id, address, notes FROM Clients ORDER BY id DESC",
+        "الوحدات_Units": "SELECT id, project_name, unit_code, status, client_name, total_price, currency, notes FROM RealEstateUnits ORDER BY id DESC",
+        "أقساط_العملاء_Installments": "SELECT id, unit_code, client_name, amount, currency, due_date, paid_date, status, collection_stage, call_notes, notes FROM UnitInstallments ORDER BY id DESC",
+        "إعادة_البيع_Resale": "SELECT id, unit_code, project_name, old_client_name, old_price, new_evaluated_price, currency, reason, requested_by, request_date, status, owner_notes FROM UnitResaleRequests ORDER BY id DESC",
+        "المالية_والمساهمين_Financials": "SELECT id, project_name, category, installment_type, shareholder_name, share_percentage, amount, currency, due_date, status, notes FROM ProjectFinancials ORDER BY id DESC",
+        "الموظفين_Employees": "SELECT emp_id, name, department, secondary_department, annual_balance, phone, exempt_report FROM Employees ORDER BY emp_id",
+        "الحضور_والتقارير_Attendance": "SELECT id, emp_id, date, time, action, distance, location_name, project_name, daily_report FROM WebAttendance ORDER BY id DESC",
+        "المستخلصات_Extracts": "SELECT id, project_name, extract_name, amount, date, created_by, status, impediment_notes FROM Extracts ORDER BY id DESC",
+        "التراخيص_Licenses": "SELECT id, project_name, license_name, due_date, status FROM ProjectLicenses ORDER BY id DESC",
+        "الرسومات_Drawings": "SELECT id, project_name, drawing_name, due_date, status FROM ProjectDrawings ORDER BY id DESC",
+        "الشيكات_Cheques": "SELECT id, unit_code, client_name, cheque_number, amount, currency, due_date, status FROM Cheques ORDER BY id DESC",
+        "الطلبات_Requests": "SELECT id, emp_id, date, req_type, notes, status FROM Requests ORDER BY id DESC",
+        "المهام_Tasks": "SELECT id, emp_id, assigner, project_name, task_desc, assign_date, due_date, status, employee_reply FROM Tasks ORDER BY id DESC",
+        "سجل_المراقبة_AuditLogs": "SELECT id, log_time, username, role, action_type, details FROM AuditLogs ORDER BY id DESC LIMIT 2000"
+    }
+    
+    dfs = {}
+    for sheet_name, q in tables_to_export.items():
+        try:
+            dfs[sheet_name] = pd.read_sql_query(q, conn)
+        except Exception:
+            dfs[sheet_name] = pd.DataFrame()
+    conn.close()
+
+    try:
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            for sheet_name, df in dfs.items():
+                df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
+        excel_buffer.seek(0)
+        return excel_buffer.getvalue(), f"Keyan_Full_Backup_{get_egypt_time().strftime('%Y%m%d_%H%M')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    except Exception:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            for sheet_name, df in dfs.items():
+                csv_bytes = df.to_csv(index=False).encode('utf-8-sig')
+                zf.writestr(f"{sheet_name}.csv", csv_bytes)
+        zip_buffer.seek(0)
+        return zip_buffer.getvalue(), f"Keyan_Full_Backup_{get_egypt_time().strftime('%Y%m%d_%H%M')}.zip", "application/zip"
+
+# ==========================================
+# 6. دوال الحسابات والتقارير وتقييم العملاء
 # ==========================================
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371000 
@@ -407,7 +546,7 @@ def process_excel(file):
                         department = "غير محدد"
                     
                     cur.execute("INSERT INTO Employees (emp_id, name, department, annual_balance) VALUES (%s, %s, %s, %s) ON CONFLICT (emp_id) DO UPDATE SET name=EXCLUDED.name, department=EXCLUDED.department", (emp_id, name, department, DEFAULT_ANNUAL_BALANCE))
-                    cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES (%s, %s, 'employee', %s) ON CONFLICT (username) DO NOTHING", (emp_id, emp_id, emp_id))
+                    cur.execute("INSERT INTO Users (username, password, role, emp_id) VALUES (%s, %s, 'employee', %s) ON CONFLICT (username) DO NOTHING", (emp_id, hash_password(emp_id), emp_id))
                     conn.commit()
                     
                     try:
