@@ -24,7 +24,7 @@ except ImportError:
     GEO_AVAILABLE = False
 
 # ==========================================
-# 0. تأمين شامل لجميع الدوال والثوابت لمنع أي NameError نهائياً
+# 0. تأمين شامل لجميع الدوال والثوابت
 # ==========================================
 LOGO_FILE = "image_c5a585.png"
 OFFICIAL_IN = '11:00'
@@ -448,7 +448,6 @@ def apply_custom_theme():
         html, body, p, h1, h2, h3, h4, h5, h6, button, input, select, textarea, label, td, th {
             font-family: 'Tajawal', sans-serif !important;
         }
-        /* الحفاظ على خط أيقونات Streamlit لمنع ظهور كلمة _arrow_right */
         [data-testid="stIconMaterial"], .material-icons, span[translate="no"] {
             font-family: 'Material Symbols Rounded', sans-serif !important;
         }
@@ -482,7 +481,8 @@ def set_dynamic_background():
             unsafe_allow_html=True
         )
 
-def render_security_and_backup_center():
+def render_security_and_backup_center(key_prefix="sec_main_"):
+    """تمت إضافة key_prefix لمنع أي تكرار للأزرار نهائياً"""
     active_role = st.session_state.get('current_role') or st.session_state.get('role')
     if active_role not in ['owner', 'admin']:
         st.warning("🔒 هذه اللوحة مخصصة للمالك (Owner) ومسؤول النظام (Admin) فقط.")
@@ -509,7 +509,7 @@ def render_security_and_backup_center():
     with col_b1:
         st.markdown("##### 🗓️ تنظيف صور البصمة الشهري (صلاحية المالك والأدمن)")
         st.caption("يقوم النظام تلقائياً يوم 1 من كل شهر بمسح صور كاميرا الشهور السابقة مع بقاء جميع سجلات وتواريخ الحضور والتقارير اليومية، ويمكنك تشغيله يدوياً الآن:")
-        if st.button("🗓️ مسح صور الشهور السابقة (تنظيف أول الشهر)", key="btn_monthly_cln_main", type="primary", use_container_width=True):
+        if st.button("🗓️ مسح صور الشهور السابقة (تنظيف أول الشهر)", key=f"{key_prefix}btn_monthly_cln", type="primary", use_container_width=True):
             del_cnt, cutoff_dt = cleanup_previous_months_photos(is_auto=False)
             st.success(f"✅ تم مسح صور الكاميرا لعدد ({del_cnt}) سجل أقدم من ({cutoff_dt}) بنجاح مع الاحتفاظ الكامل بسجلات الحضور والتقارير!")
             st.rerun()
@@ -517,7 +517,7 @@ def render_security_and_backup_center():
     with col_b2:
         st.markdown("##### 📦 النسخة الاحتياطية الشاملة (Excel Backup)")
         st.caption("تحميل جميع جداول الملاك المساهمين، الأرباع، المالية، والحضور في ملف Excel واحد.")
-        if st.button("⚙️ تجهيز ملف النسخة الاحتياطية الآن", key="prep_bk_main", use_container_width=True):
+        if st.button("⚙️ تجهيز ملف النسخة الاحتياطية الآن", key=f"{key_prefix}prep_bk", use_container_width=True):
             with st.spinner("جاري تجميع كافة جداول الشركة..."):
                 bk_bytes, bk_filename, bk_mime = generate_full_backup_safe()
                 st.session_state['ready_backup_data'] = (bk_bytes, bk_filename, bk_mime)
@@ -530,7 +530,7 @@ def render_security_and_backup_center():
                 mime=b_mime,
                 type="primary",
                 use_container_width=True,
-                key="dl_bk_main"
+                key=f"{key_prefix}dl_bk"
             )
 
 def render_sidebar(role_title):
@@ -835,11 +835,6 @@ def render_present_and_absent_employees_widget(key_prefix="dash_"):
 def render_company_dashboard():
     st.header("📊 المؤشرات الحيوية والتفاعلية للشركة")
     
-    active_role = st.session_state.get('current_role') or st.session_state.get('role')
-    if active_role in ['owner', 'admin']:
-        with st.expander("🛡️ مركز الأمان والنسخ الاحتياطي وتنظيف صور البصمة الشهري (للمالك والأدمن)", expanded=False):
-            render_security_and_backup_center()
-
     conn = get_db_connection()
     today = get_egypt_time().strftime("%Y/%m/%d")
 
@@ -1142,81 +1137,78 @@ def render_manage_extracts():
     conn.close()
 
 # ==========================================
-# 4. الموديول المالي (أقساط الجهاز + ملخص أرباع التنفيذ للمساهمين)
+# 4. الموديول المالي (أقساط الجهاز: المالك مطلع فقط بدون إضافة أو تعديل)
 # ==========================================
 def render_financials_module(can_edit=True):
     ensure_shareholders_union_schema()
-    st.header("💰 إدارة الالتزامات المالية للمشاريع (أقساط الجهاز ومتابعة أرباع التنفيذ)")
+    active_role = st.session_state.get('current_role') or st.session_state.get('role')
     
-    fin_tabs = st.tabs([
-        "🏛️ أقساط الجهاز (التزامات الهيئة/الأرض)", 
-        "🏗️ متابعة أرباع التنفيذ الـ 4 ومساهمات اتحاد الملاك"
-    ])
-    
-    with fin_tabs[0]:
-        st.subheader("🏛️ متابعة وجدولة أقساط الجهاز")
-        if can_edit:
-            with st.form("add_device_inst"):
-                c1, c2, c3, c4 = st.columns(4)
-                d_proj = c1.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)], key="dev_proj")
-                d_name = c2.text_input("بيان / رقم قسط الجهاز (مثال: القسط الثالث للأرض)")
-                d_amt = c3.number_input("قيمة قسط الجهاز", min_value=0.0, step=1000.0)
-                d_curr = c4.selectbox("العملة", CURRENCY_OPTIONS, key="dev_curr")
-                
-                c5, c6, c7 = st.columns(3)
-                d_due = c5.date_input("تاريخ استحقاق القسط")
-                d_status = c6.selectbox("حالة السداد", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"], key="dev_st")
-                d_notes = c7.text_input("ملاحظات (رقم الشيك / إيصال السداد)")
-                
-                if st.form_submit_button("تسجيل قسط الجهاز 🏛️", type="primary"):
-                    if d_name and d_amt > 0:
-                        db_execute(
-                            "INSERT INTO ProjectFinancials (project_name, installment_type, amount, currency, due_date, status, category, shareholder_name, share_percentage, notes) VALUES (%s, %s, %s, %s, %s, %s, 'قسط جهاز', 'الشركة', 100.0, %s)",
-                            (d_proj, d_name, d_amt, d_curr, d_due.strftime("%Y/%m/%d"), d_status, d_notes)
-                        )
-                        log_event("إضافة قسط جهاز", f"مشروع: {d_proj} - بيان: {d_name} - قيمة: {d_amt} {d_curr}")
-                        st.success("تم تسجيل قسط الجهاز بنجاح!")
-                        st.rerun()
-                    else:
-                        st.error("يرجى إدخال بيان القسط وقيمته.")
-                        
-        conn = get_db_connection()
-        dev_df = pd.read_sql_query("SELECT id, project_name, installment_type, amount, COALESCE(currency, 'ج.م (EGP)') as currency, due_date, status, notes FROM ProjectFinancials WHERE category = 'قسط جهاز' OR installment_type = 'قسط جهاز' ORDER BY due_date ASC", conn)
-        conn.close()
+    # المالك (owner) مطلع فقط ولا يضيف أقساط جهاز
+    if active_role == 'owner':
+        can_edit = False
         
-        if not dev_df.empty:
-            if can_edit:
-                with st.expander("🔄 تحديث حالة أو حذف قسط جهاز"):
-                    u_c1, u_c2, u_c3, u_c4 = st.columns(4)
-                    dev_opts = dev_df['id'].astype(str) + " - " + dev_df['project_name'] + " (" + dev_df['installment_type'] + " - " + dev_df['amount'].astype(str) + " " + dev_df['currency'] + ")"
-                    sel_dev = u_c1.selectbox("اختر القسط:", dev_opts)
-                    new_dev_st = u_c2.selectbox("الحالة الجديدة:", ["مدفوع", "مستحق (لم يُدفع)", "متأخر"], key="upd_dev_st")
-                    if u_c3.button("تحديث الحالة ✅", key="btn_upd_dev"):
-                        dev_id = int(sel_dev.split(" - ")[0])
-                        db_execute("UPDATE ProjectFinancials SET status=%s WHERE id=%s", (new_dev_st, dev_id))
-                        log_event("تحديث قسط جهاز", f"تغيير حالة قسط رقم {dev_id} إلى {new_dev_st}")
-                        st.success("تم التحديث!")
-                        st.rerun()
-                    if u_c4.button("🗑️ حذف القسط نهائياً", key="btn_del_dev"):
-                        dev_id = int(sel_dev.split(" - ")[0])
-                        db_execute("DELETE FROM ProjectFinancials WHERE id=%s", (dev_id,))
-                        log_event("حذف قسط جهاز", f"حذف قسط جهاز رقم {dev_id}")
-                        st.success("تم مسح القسط!")
-                        st.rerun()
-                        
-            disp_dev = dev_df.drop(columns=['id'])
-            disp_dev.columns = ['المشروع', 'بيان القسط', 'المبلغ', 'العملة', 'تاريخ الاستحقاق', 'الحالة', 'ملاحظات']
-            st.dataframe(disp_dev, use_container_width=True, hide_index=True)
+    st.header("💰 متابعة أقساط الجهاز والتزامات المشاريع")
+    
+    if not can_edit:
+        st.info("👁️ **وضع الاطلاع فقط (للمالك):** يمكنك من هنا مراجعة وطباعة موقف أقساط الجهاز، بينما يتم تسجيل الأقساط وتحديثها من خلال القسم المختص.")
+    else:
+        with st.form("add_device_inst"):
+            st.subheader("➕ تسجيل قسط جهاز جديد")
+            c1, c2, c3, c4 = st.columns(4)
+            d_proj = c1.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)], key="dev_proj")
+            d_name = c2.text_input("بيان / رقم قسط الجهاز (مثال: القسط الثالث للأرض)")
+            d_amt = c3.number_input("قيمة قسط الجهاز", min_value=0.0, step=1000.0)
+            d_curr = c4.selectbox("العملة", CURRENCY_OPTIONS, key="dev_curr")
             
-            html_dev = generate_html_report("تقرير التزامات وأقساط الجهاز - كيان الشرقية", disp_dev)
-            st.download_button("🖨️ طباعة تقرير أقساط الجهاز (PDF)", data=html_dev, file_name="Device_Installments.html", mime="text/html")
-        else:
-            st.info("لا توجد أقساط جهاز مسجلة حالياً.")
-
-    with fin_tabs[1]:
-        active_role = st.session_state.get('current_role') or st.session_state.get('role')
-        mode_to_pass = "owner" if active_role in ["owner", "admin"] else ("accountant" if can_edit else "view")
-        render_clients_and_crm_module(mode=mode_to_pass, key_prefix="fin_")
+            c5, c6, c7 = st.columns(3)
+            d_due = c5.date_input("تاريخ استحقاق القسط")
+            d_status = c6.selectbox("حالة السداد", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"], key="dev_st")
+            d_notes = c7.text_input("ملاحظات (رقم الشيك / إيصال السداد)")
+            
+            if st.form_submit_button("تسجيل قسط الجهاز 🏛️", type="primary"):
+                if d_name and d_amt > 0:
+                    db_execute(
+                        "INSERT INTO ProjectFinancials (project_name, installment_type, amount, currency, due_date, status, category, shareholder_name, share_percentage, notes) VALUES (%s, %s, %s, %s, %s, %s, 'قسط جهاز', 'الشركة', 100.0, %s)",
+                        (d_proj, d_name, d_amt, d_curr, d_due.strftime("%Y/%m/%d"), d_status, d_notes)
+                    )
+                    log_event("إضافة قسط جهاز", f"مشروع: {d_proj} - بيان: {d_name} - قيمة: {d_amt} {d_curr}")
+                    st.success("تم تسجيل قسط الجهاز بنجاح!")
+                    st.rerun()
+                else:
+                    st.error("يرجى إدخال بيان القسط وقيمته.")
+                    
+    conn = get_db_connection()
+    dev_df = pd.read_sql_query("SELECT id, project_name, installment_type, amount, COALESCE(currency, 'ج.م (EGP)') as currency, due_date, status, notes FROM ProjectFinancials WHERE category = 'قسط جهاز' OR installment_type = 'قسط جهاز' ORDER BY due_date ASC", conn)
+    conn.close()
+    
+    if not dev_df.empty:
+        if can_edit:
+            with st.expander("🔄 تحديث حالة أو حذف قسط جهاز"):
+                u_c1, u_c2, u_c3, u_c4 = st.columns(4)
+                dev_opts = dev_df['id'].astype(str) + " - " + dev_df['project_name'] + " (" + dev_df['installment_type'] + " - " + dev_df['amount'].astype(str) + " " + dev_df['currency'] + ")"
+                sel_dev = u_c1.selectbox("اختر القسط:", dev_opts)
+                new_dev_st = u_c2.selectbox("الحالة الجديدة:", ["مدفوع", "مستحق (لم يُدفع)", "متأخر"], key="upd_dev_st")
+                if u_c3.button("تحديث الحالة ✅", key="btn_upd_dev"):
+                    dev_id = int(sel_dev.split(" - ")[0])
+                    db_execute("UPDATE ProjectFinancials SET status=%s WHERE id=%s", (new_dev_st, dev_id))
+                    log_event("تحديث قسط جهاز", f"تغيير حالة قسط رقم {dev_id} إلى {new_dev_st}")
+                    st.success("تم التحديث!")
+                    st.rerun()
+                if u_c4.button("🗑️ حذف القسط نهائياً", key="btn_del_dev"):
+                    dev_id = int(sel_dev.split(" - ")[0])
+                    db_execute("DELETE FROM ProjectFinancials WHERE id=%s", (dev_id,))
+                    log_event("حذف قسط جهاز", f"حذف قسط جهاز رقم {dev_id}")
+                    st.success("تم مسح القسط!")
+                    st.rerun()
+                    
+        disp_dev = dev_df.drop(columns=['id'])
+        disp_dev.columns = ['المشروع', 'بيان القسط', 'المبلغ', 'العملة', 'تاريخ الاستحقاق', 'الحالة', 'ملاحظات']
+        st.dataframe(disp_dev, use_container_width=True, hide_index=True)
+        
+        html_dev = generate_html_report("تقرير التزامات وأقساط الجهاز - كيان الشرقية", disp_dev)
+        st.download_button("🖨️ طباعة تقرير أقساط الجهاز (PDF)", data=html_dev, file_name="Device_Installments.html", mime="text/html")
+    else:
+        st.info("لا توجد أقساط جهاز مسجلة حالياً.")
 
 # ==========================================
 # 5. نظام استثناء المالك لتقسيم ربع التنفيذ (على دفعتين أو 3)
@@ -1503,7 +1495,7 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
             disp_rank.columns = ['أولوية اختيار الوحدة', 'الاتحاد', 'اسم المالك المساهم', 'نسبة الأرض %', 'إجمالي المطالبات', 'إجمالي المسدد', 'نسبة السداد %', 'تاريخ آخر سداد فعلي', 'الوحدة المخصصة له']
             st.dataframe(disp_rank, use_container_width=True, hide_index=True)
 
-            if is_sales or is_owner:
+            if is_sales:
                 with st.expander("🏢 تثبيت وتخصيص الوحدة المختارة للمساهم (حسب أولويته)"):
                     ac1, ac2, ac3 = st.columns([2, 2, 1])
                     sh_alloc_opts = rank_df['id'].astype(str) + " - " + rank_df['name'] + " (" + rank_df['priority_badge'] + ")"
@@ -1651,7 +1643,7 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                             else:
                                 st.error("يرجى اختيار المساهم وإدخال المبلغ.")
         else:
-            st.info("ℹ️ **تنبيه صلاحيات:** إضافة وجدولة الأقساط/الأرباع للملاك المساهمين متاحة لقسم **خدمة العملاء** فقط. يمكنك من هنا الاطلاع والمتابعة.")
+            st.info("👁️ **وضع الاطلاع والمتابعة:** إضافة وجدولة الأقساط/الأرباع للملاك المساهمين متاحة لقسم **خدمة العملاء** فقط.")
 
         if not inst_df.empty:
             unpaid_df = inst_df[~inst_df['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر']) & (~inst_df['status'].str.contains('ملغي', na=False))]
@@ -1806,7 +1798,7 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                     else:
                         st.error("يرجى إدخال اسم المالك المساهم ورقم الهاتف.")
         else:
-            st.info("ℹ️ **تنبيه صلاحيات:** إضافة الملاك المساهمين/العملاء الجدد متاحة لقسم **خدمة العملاء** فقط. يمكنك من هنا الاطلاع على بيانات ونسب المساهمين.")
+            st.info("👁️ **وضع الاطلاع فقط:** إضافة الملاك المساهمين/العملاء الجدد متاحة لقسم **خدمة العملاء** فقط.")
 
         if not sh_df.empty:
             st.markdown("#### 📊 ملخص إجمالي نسب الملكية المسجلة في كل اتحاد")
