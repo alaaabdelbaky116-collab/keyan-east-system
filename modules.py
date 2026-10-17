@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import base64
 from PIL import Image
 import io
 import os
 import pytz
 import plotly.express as px
+import hashlib
+import zipfile
 from db import *
 
 try:
@@ -16,9 +18,178 @@ except ImportError:
     GEO_AVAILABLE = False
 
 # ==========================================
+# 0. تهيئة جداول اتحاد الملاك والتنظيف التلقائي أول الشهر
+# ==========================================
+SUPABASE_FREE_LIMIT_MB = 500.0
+
+if 'CURRENCY_OPTIONS' not in globals():
+    CURRENCY_OPTIONS = [
+        "ج.م (EGP)", 
+        "دولار (USD)", 
+        "ريال سعودي (SAR)", 
+        "درهم إماراتي (AED)", 
+        "يورو (EUR)"
+    ]
+
+QUARTER_OPTIONS = [
+    "الربع الأول (Q1)",
+    "الربع الثاني (Q2)",
+    "الربع الثالث (Q3)",
+    "الربع الرابع (Q4)",
+    "دفعة أرض / تأسيس"
+]
+
+@st.cache_resource
+def ensure_shareholders_union_schema():
+    try:
+        conn = get_db_connection()
+        conn.autocommit = True
+        cur = conn.cursor()
+
+        cur.execute('''CREATE TABLE IF NOT EXISTS SystemMeta (
+            meta_key TEXT PRIMARY KEY,
+            meta_value TEXT
+        )''')
+
+        cur.execute('''CREATE TABLE IF NOT EXISTS Shareholders (
+            id SERIAL PRIMARY KEY,
+            name TEXT,
+            phone TEXT,
+            national_id TEXT,
+            address TEXT,
+            project_name TEXT,
+            land_share_pct REAL DEFAULT 0.0,
+            land_share_amount REAL DEFAULT 0.0,
+            currency TEXT DEFAULT 'ج.م (EGP)',
+            assigned_unit TEXT DEFAULT 'لم يخصص بعد',
+            notes TEXT
+        )''')
+
+        cur.execute('''CREATE TABLE IF NOT EXISTS QuarterSplitRequests (
+            id SERIAL PRIMARY KEY,
+            installment_id INTEGER,
+            project_name TEXT,
+            shareholder_name TEXT,
+            phase_name TEXT,
+            quarter_name TEXT,
+            original_amount REAL,
+            currency TEXT DEFAULT 'ج.م (EGP)',
+            split_count INTEGER DEFAULT 2,
+            reason TEXT,
+            requested_by TEXT,
+            request_date TEXT,
+            status TEXT DEFAULT 'بانتظار موافقة المالك',
+            owner_notes TEXT DEFAULT ''
+        )''')
+
+        alter_stmts = [
+            "ALTER TABLE UnitInstallments ADD COLUMN project_name TEXT DEFAULT 'اتحاد 1'",
+            "ALTER TABLE UnitInstallments ADD COLUMN phase_name TEXT DEFAULT 'مرحلة تنفيذ'",
+            "ALTER TABLE UnitInstallments ADD COLUMN quarter_name TEXT DEFAULT 'الربع الأول (Q1)'",
+            "ALTER TABLE UnitInstallments ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'",
+            "ALTER TABLE UnitInstallments ADD COLUMN is_split_exception BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE ProjectFinancials ADD COLUMN quarter_name TEXT DEFAULT 'الربع الأول (Q1)'",
+            "ALTER TABLE ProjectFinancials ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'"
+        ]
+        for q in alter_stmts:
+            try:
+                cur.execute(q)
+            except:
+                pass
+
+        cur.close()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+def cleanup_previous_months_photos(is_auto=False):
+    """مسح صور كاميرا البصمة للشهور السابقة فقط مع الحفاظ الكامل على سجلات وتواريخ الحضور والتقارير"""
+    now_eg = get_egypt_time()
+    first_day_current_month = now_eg.strftime("%Y/%m") + "/01"
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE WebAttendance SET photo='' WHERE date < %s AND photo IS NOT NULL AND photo != ''",
+        (first_day_current_month,)
+    )
+    deleted_count = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    mode_str = "تلقائي أول الشهر" if is_auto else "يدوي بواسطة الإدارة"
+    if deleted_count > 0 or not is_auto:
+        log_event("تنظيف صور البصمة الشهرية", f"({mode_str}) تم مسح صور {deleted_count} سجل أقدم من {first_day_current_month}")
+    return deleted_count, first_day_current_month
+
+def run_auto_monthly_photo_cleanup():
+    """يعمل تلقائياً مع بداية كل شهر جديد لتفريغ صور الشهور السابقة"""
+    try:
+        ensure_shareholders_union_schema()
+        current_month_tag = get_egypt_time().strftime("%Y/%m")
+        res = db_fetchone("SELECT meta_value FROM SystemMeta WHERE meta_key='last_photo_cleanup_month'")
+        last_cleaned = res[0] if res else ""
+        if last_cleaned != current_month_tag:
+            cleanup_previous_months_photos(is_auto=True)
+            db_execute(
+                "INSERT INTO SystemMeta (meta_key, meta_value) VALUES ('last_photo_cleanup_month', %s) ON CONFLICT (meta_key) DO UPDATE SET meta_value=EXCLUDED.meta_value",
+                (current_month_tag,)
+            )
+    except Exception:
+        pass
+
+def get_database_size_info_safe():
+    try:
+        if 'get_database_size_info' in globals():
+            return get_database_size_info()
+        res = db_fetchone("SELECT pg_database_size(current_database())")
+        size_bytes = float(res[0]) if res and res[0] else 0.0
+        size_mb = round(size_bytes / (1024 * 1024), 2)
+        pct = round(min(100.0, (size_mb / SUPABASE_FREE_LIMIT_MB) * 100.0), 1)
+        return size_mb, pct, pd.DataFrame()
+    except Exception:
+        return 0.0, 0.0, pd.DataFrame()
+
+def generate_full_backup_safe():
+    conn = get_db_connection()
+    tables_to_export = {
+        "الملاك_المساهمين_Shareholders": "SELECT * FROM Shareholders ORDER BY id DESC",
+        "أرباع_التنفيذ_Installments": "SELECT * FROM UnitInstallments ORDER BY id DESC",
+        "استثناءات_التقسيم_Splits": "SELECT * FROM QuarterSplitRequests ORDER BY id DESC",
+        "أقساط_الجهاز_والمالية": "SELECT * FROM ProjectFinancials ORDER BY id DESC",
+        "الموظفين_Employees": "SELECT emp_id, name, department, secondary_department, annual_balance, phone, exempt_report FROM Employees ORDER BY emp_id",
+        "سجل_الحضور_Attendance": "SELECT id, emp_id, date, time, action, distance, location_name, project_name, daily_report FROM WebAttendance ORDER BY id DESC",
+        "المستخلصات_Extracts": "SELECT id, project_name, extract_name, amount, date, created_by, status, impediment_notes FROM Extracts ORDER BY id DESC",
+        "سجل_المراقبة_AuditLogs": "SELECT * FROM AuditLogs ORDER BY id DESC LIMIT 2000"
+    }
+    dfs = {}
+    for s_name, q in tables_to_export.items():
+        try:
+            dfs[s_name] = pd.read_sql_query(q, conn)
+        except Exception:
+            dfs[s_name] = pd.DataFrame()
+    conn.close()
+
+    try:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            for s_name, df in dfs.items():
+                df.to_excel(writer, sheet_name=s_name[:31], index=False)
+        buf.seek(0)
+        return buf.getvalue(), f"Keyan_Backup_{get_egypt_time().strftime('%Y%m%d_%H%M')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    except Exception:
+        zbuf = io.BytesIO()
+        with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for s_name, df in dfs.items():
+                zf.writestr(f"{s_name}.csv", df.to_csv(index=False).encode('utf-8-sig'))
+        zbuf.seek(0)
+        return zbuf.getvalue(), f"Keyan_Backup_{get_egypt_time().strftime('%Y%m%d_%H%M')}.zip", "application/zip"
+
+# ==========================================
 # 1. التصميم العام والشريط الجانبي ومركز الأمان والتنبيهات
 # ==========================================
 def apply_custom_theme():
+    run_auto_monthly_photo_cleanup()
     st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&display=swap');
@@ -56,32 +227,40 @@ def set_dynamic_background():
         )
 
 def render_security_and_backup_center():
-    st.subheader("🛡️ مركز الأمان والنسخ الاحتياطي ومساحة السيرفر (Supabase)")
-    used_mb, used_pct, tables_df = get_database_size_info()
+    active_role = st.session_state.get('current_role') or st.session_state.get('role')
+    if active_role not in ['owner', 'admin']:
+        st.warning("🔒 هذه اللوحة مخصصة للمالك (Owner) ومسؤول النظام (Admin) فقط.")
+        return
+
+    st.subheader("🛡️ مركز الأمان والنسخ الاحتياطي وتنظيف مساحة السيرفر (للمالك والأدمن فقط)")
+    used_mb, used_pct, tables_df = get_database_size_info_safe()
     remaining_mb = max(0.0, SUPABASE_FREE_LIMIT_MB - used_mb)
     
     c1, c2, c3 = st.columns(3)
     c1.metric("💾 المساحة المستهلكة حالياً", f"{used_mb} MB", f"{used_pct}% من الباقة المجانية")
     c2.metric("🟢 المساحة المتبقية (من 500 MB)", f"{remaining_mb:.2f} MB")
-    c3.metric("🔒 تشفير الاتصال والحسابات", "SSL + SHA-256 نشط")
+    c3.metric("🗓️ التنظيف التلقائي أول الشهر", "مفعّل آلياً ✅")
     
     st.progress(min(1.0, used_pct / 100.0), text=f"نسبة استهلاك قاعدة بيانات Supabase: {used_mb} ميجابايت من أصل 500 ميجابايت ({used_pct}%)")
-    
-    if not tables_df.empty:
-        with st.expander("📊 تفاصيل استهلاك المساحة لكل جدول في قاعدة البيانات"):
-            st.dataframe(tables_df, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    col_b1, col_b2, col_b3 = st.columns(3)
+    col_b1, col_b2 = st.columns(2)
     
     with col_b1:
-        st.markdown("##### 📦 النسخة الاحتياطية الشاملة")
-        st.caption("تحميل جميع جداول وحسابات الشركة في ملف Excel واحد لحفظه على جهازك أو Google Drive.")
+        st.markdown("##### 🗓️ تنظيف صور البصمة الشهري (صلاحية المالك والأدمن)")
+        st.caption("يقوم النظام تلقائياً يوم 1 من كل شهر بمسح صور كاميرا الشهور السابقة مع بقاء جميع سجلات وتواريخ الحضور والتقارير اليومية، ويمكنك تشغيله يدوياً الآن:")
+        if st.button("🗓️ مسح صور الشهور السابقة (تنظيف أول الشهر)", key="btn_monthly_cln_main", type="primary", use_container_width=True):
+            del_cnt, cutoff_dt = cleanup_previous_months_photos(is_auto=False)
+            st.success(f"✅ تم مسح صور الكاميرا لعدد ({del_cnt}) سجل أقدم من ({cutoff_dt}) بنجاح مع الاحتفاظ الكامل بسجلات الحضور والتقارير!")
+            st.rerun()
+
+    with col_b2:
+        st.markdown("##### 📦 النسخة الاحتياطية الشاملة (Excel Backup)")
+        st.caption("تحميل جميع جداول الملاك المساهمين، الأرباع، المالية، والحضور في ملف Excel واحد.")
         if st.button("⚙️ تجهيز ملف النسخة الاحتياطية الآن", key="prep_bk_main", use_container_width=True):
             with st.spinner("جاري تجميع كافة جداول الشركة..."):
-                bk_bytes, bk_filename, bk_mime = generate_full_backup_file()
+                bk_bytes, bk_filename, bk_mime = generate_full_backup_safe()
                 st.session_state['ready_backup_data'] = (bk_bytes, bk_filename, bk_mime)
-                log_event("تجهيز نسخة احتياطية", f"الملف: {bk_filename}")
         if 'ready_backup_data' in st.session_state:
             b_bytes, b_name, b_mime = st.session_state['ready_backup_data']
             st.download_button(
@@ -93,22 +272,6 @@ def render_security_and_backup_center():
                 use_container_width=True,
                 key="dl_bk_main"
             )
-
-    with col_b2:
-        st.markdown("##### 🧹 توفير المساحة (تفريغ الصور القديمة)")
-        st.caption("يمسح صور كاميرا البصمة القديمة فقط لتفريغ المساحة مع بقاء سجلات وتواريخ وتقارير الحضور كاملة.")
-        days_keep = st.selectbox("الاحتفاظ بصور البصمة لآخر:", [30, 60, 90, 180], index=2, format_func=lambda x: f"{x} يوم (ومسح الصور الأقدم)", key="cln_days_main")
-        if st.button("🧹 تفريغ صور البصمة القديمة", key="btn_cln_main", use_container_width=True):
-            freed_rows = cleanup_old_attendance_photos(days_keep)
-            st.success(f"✅ تم تفريغ الصور من ({freed_rows}) سجل قديم بنجاح مع بقاء بيانات الحضور!")
-            st.rerun()
-
-    with col_b3:
-        st.markdown("##### 🔐 تشفير كلمات المرور (SHA-256)")
-        st.caption("تحويل أي كلمة مرور نصية في جدول المستخدمين إلى شفرة رقمية غير قابلة للقراءة.")
-        if st.button("🔐 تشفير جميع كلمات المرور الحالية", key="btn_hash_main", use_container_width=True):
-            enc_cnt = encrypt_all_existing_passwords()
-            st.success(f"✅ تم تأمين وتشفير ({enc_cnt}) حساب بنظام SHA-256!")
 
 def render_sidebar(role_title):
     with st.sidebar:
@@ -149,23 +312,28 @@ def render_sidebar(role_title):
                 new_pwd = st.text_input("كلمة المرور الجديدة", type="password", placeholder="أدخل باسورد قوي")
                 if st.form_submit_button("تحديث الحساب", use_container_width=True):
                     if len(new_pwd) >= 3:
-                        db_execute("UPDATE Users SET password=%s WHERE username=%s", (hash_password(new_pwd), st.session_state['username']))
-                        log_event("تغيير كلمة المرور", "قام المستخدم بتحديث كلمة المرور الخاصة به (مشفرة SHA-256)")
-                        st.success("تم التغيير والتشفير بنجاح! احتفظ بها.")
+                        pwd_to_save = hash_password(new_pwd) if 'hash_password' in globals() else new_pwd
+                        db_execute("UPDATE Users SET password=%s WHERE username=%s", (pwd_to_save, st.session_state['username']))
+                        log_event("تغيير كلمة المرور", "قام المستخدم بتحديث كلمة المرور الخاصة به")
+                        st.success("تم التغيير بنجاح! احتفظ بها.")
                     else:
                         st.error("كلمة المرور قصيرة جداً.")
 
+        # يظهر للمالك (owner) والأدمن (admin) فقط حسب الطلب
         active_role = st.session_state.get('current_role') or st.session_state.get('role')
-        if active_role in ['admin', 'owner', 'it']:
-            with st.expander("🛡️ الأمان والنسخ الاحتياطي والمساحة"):
-                used_mb, used_pct, _ = get_database_size_info()
+        if active_role in ['owner', 'admin']:
+            with st.expander("🛡️ المساحة وتنظيف أول الشهر (للمالك والأدمن)"):
+                used_mb, used_pct, _ = get_database_size_info_safe()
                 st.caption(f"💾 مساحة Supabase: **{used_mb} MB** / 500 MB ({used_pct}%)")
                 st.progress(min(1.0, used_pct / 100.0))
                 
+                if st.button("🗓️ مسح صور الشهور السابقة (تنظيف أول الشهر)", key="sb_monthly_cln", type="primary", use_container_width=True):
+                    del_cnt, cutoff_dt = cleanup_previous_months_photos(is_auto=False)
+                    st.success(f"تم مسح صور ({del_cnt}) سجل أقدم من {cutoff_dt}!")
+                    
                 if st.button("📦 تجهيز نسخة احتياطية (Excel)", key="sb_prep_bk", use_container_width=True):
-                    bk_bytes, bk_filename, bk_mime = generate_full_backup_file()
+                    bk_bytes, bk_filename, bk_mime = generate_full_backup_safe()
                     st.session_state['sb_backup_data'] = (bk_bytes, bk_filename, bk_mime)
-                    log_event("تجهيز نسخة احتياطية (شريط جانبي)", bk_filename)
                 if 'sb_backup_data' in st.session_state:
                     sb_bytes, sb_name, sb_mime = st.session_state['sb_backup_data']
                     st.download_button(
@@ -173,16 +341,9 @@ def render_sidebar(role_title):
                         data=sb_bytes,
                         file_name=sb_name,
                         mime=sb_mime,
-                        type="primary",
                         use_container_width=True,
                         key="sb_dl_bk"
                     )
-                if st.button("🧹 تفريغ صور البصمة (> 90 يوم)", key="sb_cln_ph", use_container_width=True):
-                    cnt = cleanup_old_attendance_photos(90)
-                    st.success(f"تم تفريغ صور ({cnt}) سجل قديم!")
-                if st.button("🔐 تشفير باسوردات الحسابات", key="sb_enc_pw", use_container_width=True):
-                    c_enc = encrypt_all_existing_passwords()
-                    st.success(f"تم تشفير ({c_enc}) حساب!")
                         
         st.divider()
         if st.button("🚪 تسجيل الخروج", use_container_width=True):
@@ -191,21 +352,22 @@ def render_sidebar(role_title):
             st.rerun()
 
 def render_smart_alerts():
+    ensure_shareholders_union_schema()
     conn = get_db_connection()
     today = get_egypt_time()
     alerts = []
 
     try:
-        esc_owner_df = pd.read_sql_query("SELECT client_name, unit_code, amount, COALESCE(currency, 'ج.م (EGP)') as currency, due_date FROM UnitInstallments WHERE collection_stage = 'محول للمالك (لتدخل الإدارة العليا)' AND status NOT IN ('مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر')", conn)
+        esc_owner_df = pd.read_sql_query("SELECT client_name, project_name, quarter_name, amount, COALESCE(currency, 'ج.م (EGP)') as currency FROM UnitInstallments WHERE collection_stage = 'محول للمالك (لتدخل الإدارة العليا)' AND status NOT IN ('مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر', 'ملغي (تم تقسيم الربع)')", conn)
         for _, row in esc_owner_df.iterrows():
-            alerts.append(f"🚨 **تدخل المالك عاجل:** العميل ({row['client_name']}) - وحدة ({row['unit_code']}) متأخر في سداد ({row['amount']:,.0f} {row['currency']}) ولم يستجب لمكالمات خدمة العملاء ولا الشؤون القانونية!")
+            alerts.append(f"🚨 **تدخل المالك عاجل:** المساهم ({row['client_name']}) في ({row['project_name']} - {row['quarter_name']}) متأخر في سداد ({row['amount']:,.0f} {row['currency']}) وتم تصعيده للمالك!")
     except:
         pass
 
     try:
-        resale_pending = pd.read_sql_query("SELECT unit_code, project_name, new_evaluated_price, COALESCE(currency, 'ج.م (EGP)') as currency FROM UnitResaleRequests WHERE status = 'بانتظار موافقة المالك'", conn)
-        for _, row in resale_pending.iterrows():
-            alerts.append(f"🔄 **طلب إعادة بيع وتقييم:** الوحدة ({row['unit_code']} - {row['project_name']}) بانتظار موافقة المالك على التقييم الجديد ({row['new_evaluated_price']:,.0f} {row['currency']}) لعرضها للبيع!")
+        split_pending = pd.read_sql_query("SELECT shareholder_name, project_name, quarter_name, split_count, original_amount, currency FROM QuarterSplitRequests WHERE status = 'بانتظار موافقة المالك'", conn)
+        for _, row in split_pending.iterrows():
+            alerts.append(f"👑 **طلب استثناء تقسيم ربع تنفيذ:** المساهم ({row['shareholder_name']} - {row['project_name']}) يطلب استثناء لتقسيم ({row['quarter_name']}) بقيمة ({row['original_amount']:,.0f} {row['currency']}) على ({row['split_count']} دفعات) بانتظار موافقة المالك!")
     except:
         pass
 
@@ -248,7 +410,7 @@ def render_smart_alerts():
             for alert in alerts:
                 if '❌' in alert or '🚨' in alert:
                     st.error(alert)
-                elif '🔄' in alert:
+                elif '👑' in alert:
                     st.info(alert)
                 else:
                     st.warning(alert)
@@ -341,8 +503,10 @@ def render_department_exemption_manager(department_filter="الكل"):
 def render_company_dashboard():
     st.header("📊 المؤشرات الحيوية والتفاعلية للشركة")
     
-    with st.expander("🛡️ مركز الأمان والنسخ الاحتياطي ومراقبة مساحة Supabase (اضغط للفتح)", expanded=False):
-        render_security_and_backup_center()
+    active_role = st.session_state.get('current_role') or st.session_state.get('role')
+    if active_role in ['owner', 'admin']:
+        with st.expander("🛡️ مركز الأمان والنسخ الاحتياطي وتنظيف صور البصمة الشهري (للمالك والأدمن)", expanded=False):
+            render_security_and_backup_center()
 
     conn = get_db_connection()
     today = get_egypt_time().strftime("%Y/%m/%d")
@@ -375,8 +539,8 @@ def render_company_dashboard():
             st.info("لا توجد بيانات للمشاريع بعد.")
 
     with col2:
-        st.subheader("💰 الموقف المالي للأقساط")
-        fin_df = pd.read_sql_query("SELECT status AS \"الحالة\", SUM(amount) AS \"الإجمالي\" FROM ProjectFinancials GROUP BY status", conn)
+        st.subheader("💰 الموقف المالي لأرباع التنفيذ وأقساط الجهاز")
+        fin_df = pd.read_sql_query("SELECT status AS \"الحالة\", SUM(amount) AS \"الإجمالي\" FROM UnitInstallments GROUP BY status", conn)
         if not fin_df.empty:
             fig2 = px.pie(fin_df, values="الإجمالي", names="الحالة", hole=0.45, color_discrete_sequence=px.colors.sequential.YlOrBr)
             fig2.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_family="Tajawal", font_color="#fff")
@@ -617,19 +781,23 @@ def render_manage_extracts():
     conn.close()
 
 # ==========================================
-# 4. الموديول المالي (أقساط الجهاز vs أقساط التنفيذ ومساهمات الملاك) - شامل العملة
+# 4. الموديول المالي (أقساط الجهاز + ملخص أرباع التنفيذ للمساهمين)
 # ==========================================
 def render_financials_module(can_edit=True):
-    st.header("💰 إدارة الالتزامات المالية للمشاريع (الجهاز vs التنفيذ ومساهمات الملاك)")
+    ensure_shareholders_union_schema()
+    st.header("💰 إدارة الالتزامات المالية للمشاريع (أقساط الجهاز وأرباع التنفيذ للمساهمين)")
     
-    fin_tabs = st.tabs(["🏛️ أقساط الجهاز (التزامات الهيئة/الأرض)", "🏗️ أقساط التنفيذ ومساهمات الملاك"])
+    fin_tabs = st.tabs([
+        "🏛️ أقساط الجهاز (التزامات الهيئة/الأرض)", 
+        "🏗️ إدارة أرباع التنفيذ الـ 4 ومساهمات اتحاد الملاك"
+    ])
     
     with fin_tabs[0]:
         st.subheader("🏛️ متابعة وجدولة أقساط الجهاز")
         if can_edit:
             with st.form("add_device_inst"):
                 c1, c2, c3, c4 = st.columns(4)
-                d_proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)], key="dev_proj")
+                d_proj = c1.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)], key="dev_proj")
                 d_name = c2.text_input("بيان / رقم قسط الجهاز (مثال: القسط الثالث للأرض)")
                 d_amt = c3.number_input("قيمة قسط الجهاز", min_value=0.0, step=1000.0)
                 d_curr = c4.selectbox("العملة", CURRENCY_OPTIONS, key="dev_curr")
@@ -685,638 +853,641 @@ def render_financials_module(can_edit=True):
             st.info("لا توجد أقساط جهاز مسجلة حالياً.")
 
     with fin_tabs[1]:
-        st.subheader("🏗️ أقساط التنفيذ وحصص الملاك المساهمين")
-        st.info("💡 في هذا القسم يتم تسجيل دفعات وأقساط التنفيذ المطلوبة لكل مشروع وتوزيعها على الملاك المساهمين لمعرفة التزام كل شريك/مالك.")
-        
-        if can_edit:
-            with st.form("add_exec_inst"):
-                c1, c2, c3 = st.columns(3)
-                e_proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)], key="exec_proj")
-                e_phase = c2.text_input("بند / مرحلة التنفيذ (مثال: دفعة صب سقف الأول)")
-                e_sh_name = c3.text_input("اسم المالك المساهم / الشريك")
-                
-                c4, c5, c6, c7 = st.columns(4)
-                e_share_pct = c4.number_input("نسبة مساهمة المالك (%)", min_value=1.0, max_value=100.0, value=100.0, step=5.0)
-                e_amt = c5.number_input("المبلغ المطلوب من المساهم", min_value=0.0, step=1000.0)
-                e_curr = c6.selectbox("العملة", CURRENCY_OPTIONS, key="exec_curr")
-                e_due = c7.date_input("تاريخ استحقاق الدفعة")
-                
-                c8, c9 = st.columns(2)
-                e_status = c8.selectbox("حالة سداد المساهم", ["مستحق (لم يُدفع)", "مدفوع", "متأخر"], key="exec_st")
-                e_notes = c9.text_input("ملاحظات المساهمة")
-                
-                if st.form_submit_button("تسجيل دفعة التنفيذ ومساهمة المالك 🏗️", type="primary"):
-                    if e_phase and e_sh_name and e_amt > 0:
-                        db_execute(
-                            "INSERT INTO ProjectFinancials (project_name, installment_type, amount, currency, due_date, status, category, shareholder_name, share_percentage, notes) VALUES (%s, %s, %s, %s, %s, %s, 'قسط تنفيذ', %s, %s, %s)",
-                            (e_proj, e_phase, e_amt, e_curr, e_due.strftime("%Y/%m/%d"), e_status, e_sh_name.strip(), e_share_pct, e_notes)
-                        )
-                        log_event("إضافة قسط تنفيذ ومساهمة مالك", f"مشروع: {e_proj} - المساهم: {e_sh_name} - المبلغ: {e_amt} {e_curr}")
-                        st.success("تم تسجيل قسط التنفيذ وحصة المالك المساهم بنجاح!")
-                        st.rerun()
-                    else:
-                        st.error("يرجى إدخال بند التنفيذ، اسم المالك المساهم، والمبلغ.")
-                        
-        conn = get_db_connection()
-        exec_df = pd.read_sql_query("SELECT id, project_name, installment_type, shareholder_name, share_percentage, amount, COALESCE(currency, 'ج.م (EGP)') as currency, due_date, status, notes FROM ProjectFinancials WHERE category = 'قسط تنفيذ' OR installment_type = 'قسط تنفيذ' ORDER BY due_date ASC", conn)
-        conn.close()
-        
-        if not exec_df.empty:
-            if can_edit:
-                with st.expander("🔄 تحديث حالة أو حذف مساهمة مالك في التنفيذ"):
-                    u_c1, u_c2, u_c3, u_c4 = st.columns(4)
-                    exec_opts = exec_df['id'].astype(str) + " - " + exec_df['project_name'] + " | المساهم: " + exec_df['shareholder_name'].fillna('') + " (" + exec_df['installment_type'] + " - " + exec_df['amount'].astype(str) + " " + exec_df['currency'] + ")"
-                    sel_exec = u_c1.selectbox("اختر دفعة المساهم:", exec_opts)
-                    new_exec_st = u_c2.selectbox("الحالة الجديدة:", ["مدفوع", "مستحق (لم يُدفع)", "متأخر"], key="upd_exec_st")
-                    if u_c3.button("تحديث سداد المساهم ✅", key="btn_upd_exec"):
-                        exec_id = int(sel_exec.split(" - ")[0])
-                        db_execute("UPDATE ProjectFinancials SET status=%s WHERE id=%s", (new_exec_st, exec_id))
-                        log_event("تحديث سداد مساهمة تنفيذ", f"تغيير حالة دفعة رقم {exec_id} إلى {new_exec_st}")
-                        st.success("تم التحديث!")
-                        st.rerun()
-                    if u_c4.button("🗑️ حذف الدفعة نهائياً", key="btn_del_exec"):
-                        exec_id = int(sel_exec.split(" - ")[0])
-                        db_execute("DELETE FROM ProjectFinancials WHERE id=%s", (exec_id,))
-                        log_event("حذف دفعة تنفيذ", f"حذف دفعة تنفيذ رقم {exec_id}")
-                        st.success("تم مسح الدفعة!")
-                        st.rerun()
-                        
-            disp_exec = exec_df.drop(columns=['id'])
-            disp_exec.columns = ['المشروع', 'بند التنفيذ', 'اسم المالك المساهم', 'نسبة المساهمة %', 'المبلغ المطلوب', 'العملة', 'تاريخ الاستحقاق', 'حالة السداد', 'ملاحظات']
-            st.dataframe(disp_exec, use_container_width=True, hide_index=True)
-            
-            st.markdown("#### 📊 ملخص موقف الملاك المساهمين في أقساط التنفيذ")
-            sh_summary = exec_df.groupby(['project_name', 'shareholder_name', 'currency', 'status'])['amount'].sum().unstack(fill_value=0).reset_index()
-            sh_summary.rename(columns={'project_name': 'المشروع', 'shareholder_name': 'اسم المالك المساهم', 'currency': 'العملة'}, inplace=True)
-            st.dataframe(sh_summary, use_container_width=True, hide_index=True)
-            
-            html_exec = generate_html_report("تقرير أقساط التنفيذ ومساهمات الملاك - كيان الشرقية", disp_exec)
-            st.download_button("🖨️ طباعة تقرير أقساط التنفيذ والمساهمين (PDF)", data=html_exec, file_name="Execution_Shareholders.html", mime="text/html")
-        else:
-            st.info("لا توجد أقساط تنفيذ أو مساهمات ملاك مسجلة حالياً.")
+        active_role = st.session_state.get('current_role') or st.session_state.get('role')
+        mode_to_pass = "owner" if active_role in ["owner", "admin"] else ("accountant" if can_edit else "view")
+        render_clients_and_crm_module(mode=mode_to_pass, key_prefix="fin_")
 
 # ==========================================
-# 5. موديول إعادة تقييم وإعادة بيع الوحدات (Resale & Re-valuation)
+# 5. نظام استثناء المالك لتقسيم ربع التنفيذ (على دفعتين أو 3)
 # ==========================================
-def render_unit_resale_module(mode="sales"):
+def render_quarter_split_exception_module(mode="sales", key_prefix=""):
+    ensure_shareholders_union_schema()
     is_owner = (mode == "owner")
-    can_request = mode in ["sales", "legal", "owner"]
+    can_request = mode in ["sales", "accountant", "legal", "owner"]
     
-    st.subheader("🔄 دورة إعادة تقييم وإعادة بيع الوحدات (Unit Resale & Re-valuation)")
-    st.info("💡 عندما يتم سحب وحدة من عميل متعثر أو طلب إعادة بيعها، يتم تقديم **تقييم سعري جديد** للوحدة، وبمجرد **موافقة المالك** عليه تتحول الوحدة تلقائياً إلى **'متاحة'** بالسعر التقييمي الجديد لعرضها للبيع مرة أخرى.")
+    st.subheader("👑 استثناء المالك لتقسيم ربع التنفيذ (على دفعتين أو 3 دفعات)")
+    st.info("💡 **القاعدة الأساسية:** يسدد المالك المساهم تكلفة الربع كاملة مرة واحدة. في حال رغبة المساهم في تقسيم الربع على **دفعتين (مرحلتين)** أو **3 دفعات**، يتم رفع طلب استثناء هنا ولا يتم تقسيم الربع في حسابه إلا بعد **موافقة مالك الشركة (Owner)**.")
     
     conn = get_db_connection()
     try:
-        units_df = pd.read_sql_query("SELECT id, project_name, unit_code, status, client_name, total_price, COALESCE(currency, 'ج.م (EGP)') as currency, notes FROM RealEstateUnits ORDER BY id DESC", conn)
-    except:
-        units_df = pd.DataFrame()
+        unpaid_q_df = pd.read_sql_query("""
+            SELECT id, COALESCE(project_name, unit_code) as project_name, client_name, 
+                   COALESCE(phase_name, 'مرحلة تنفيذ') as phase_name, 
+                   COALESCE(quarter_name, notes) as quarter_name, 
+                   amount, COALESCE(currency, 'ج.م (EGP)') as currency, due_date, status 
+            FROM UnitInstallments 
+            WHERE status IN ('مستحق (لم يُدفع)', 'متأخر') 
+              AND (is_split_exception IS NULL OR is_split_exception = FALSE)
+            ORDER BY id DESC
+        """, conn)
+    except Exception:
+        unpaid_q_df = pd.DataFrame()
         
     try:
-        resale_df = pd.read_sql_query("SELECT id, unit_code, project_name, old_client_name, old_price, new_evaluated_price, COALESCE(currency, 'ج.م (EGP)') as currency, reason, requested_by, request_date, status, owner_notes FROM UnitResaleRequests ORDER BY id DESC", conn)
-    except:
-        resale_df = pd.DataFrame()
+        split_reqs_df = pd.read_sql_query("SELECT * FROM QuarterSplitRequests ORDER BY id DESC", conn)
+    except Exception:
+        split_reqs_df = pd.DataFrame()
     conn.close()
-    
-    if is_owner and not resale_df.empty:
-        pending_resales = resale_df[resale_df['status'] == 'بانتظار موافقة المالك']
-        if not pending_resales.empty:
-            st.warning(f"🔔 لديك ({len(pending_resales)}) طلب إعادة تقييم وإعادة بيع وحدة بانتظار موافقتك!")
-            for _, r_row in pending_resales.iterrows():
-                curr_lbl = r_row['currency']
-                with st.expander(f"👑 اعتماد إعادة تقييم وحدة: {r_row['unit_code']} ({r_row['project_name']}) | السعر المقترح: {r_row['new_evaluated_price']:,.2f} {curr_lbl}", expanded=True):
-                    st.write(f"**العميل السابق:** {r_row['old_client_name']} | **السعر السابق:** {r_row['old_price']:,.2f} {curr_lbl} | **مقدم الطلب:** {r_row['requested_by']} ({r_row['request_date']})")
-                    st.write(f"**سبب إعادة البيع والتقييم:** {r_row['reason']}")
+
+    # 1. قسم اعتماد مالك الشركة (Owner Only)
+    if is_owner and not split_reqs_df.empty:
+        pending_splits = split_reqs_df[split_reqs_df['status'] == 'بانتظار موافقة المالك']
+        if not pending_splits.empty:
+            st.warning(f"🔔 لديك ({len(pending_splits)}) طلب استثناء لتقسيم ربع تنفيذ بانتظار موافقتك كمالك للشركة!")
+            for _, s_row in pending_splits.iterrows():
+                curr_v = s_row['currency'] or 'ج.م (EGP)'
+                split_n = int(s_row['split_count'])
+                part_val = float(s_row['original_amount']) / split_n
+                with st.expander(f"👑 طلب استثناء: المساهم ({s_row['shareholder_name']}) | {s_row['project_name']} - {s_row['quarter_name']} | تقسيم ({s_row['original_amount']:,.2f} {curr_v}) على ({split_n} دفعات)", expanded=True):
+                    st.write(f"**المرحلة:** {s_row['phase_name']} | **الربع:** {s_row['quarter_name']} | **قيمة كل دفعة بعد التقسيم:** `{part_val:,.2f} {curr_v}`")
+                    st.write(f"**سبب طلب الاستثناء:** {s_row['reason']} | **مقدم الطلب:** {s_row['requested_by']} ({s_row['request_date']})")
                     
-                    oc1, oc2 = st.columns(2)
-                    final_approved_price = oc1.number_input(f"السعر التقييمي المعتمد من المالك ({curr_lbl}):", min_value=0.0, value=float(r_row['new_evaluated_price']), step=5000.0, key=f"own_pr_{r_row['id']}")
-                    owner_comment = oc2.text_input("ملاحظات وقرار المالك:", value="موافق على التقييم الجديد وإعادة الطرح للبيع", key=f"own_nt_{r_row['id']}")
+                    own_note = st.text_input("ملاحظات وقرار مالك الشركة:", value=f"موافقة استثنائية على تقسيم الربع إلى {split_n} دفعات", key=f"{key_prefix}own_sp_nt_{s_row['id']}")
+                    bc1, bc2 = st.columns(2)
                     
-                    btn_c1, btn_c2 = st.columns(2)
-                    if btn_c1.button("✅ موافقة المالك وعرض الوحدة للبيع بالسعر الجديد", key=f"app_res_{r_row['id']}", type="primary", use_container_width=True):
+                    if bc1.button(f"✅ موافقة المالك وتقسيم الربع آلياً إلى ({split_n}) دفعات", key=f"{key_prefix}app_sp_{s_row['id']}", type="primary", use_container_width=True):
+                        # التحقق من القسط الأصلي
+                        orig_inst = db_fetchone("SELECT due_date FROM UnitInstallments WHERE id=%s", (int(s_row['installment_id']),))
+                        base_due_str = orig_inst[0] if orig_inst and orig_inst[0] else get_egypt_time().strftime("%Y/%m/%d")
+                        try:
+                            base_due_dt = datetime.strptime(base_due_str, "%Y/%m/%d")
+                        except:
+                            base_due_dt = get_egypt_time()
+
+                        # 1. إلغاء القسط الموحد القديم بسبب التقسيم
                         db_execute(
-                            "UPDATE UnitResaleRequests SET status='معتمد وتم عرضها للبيع', new_evaluated_price=%s, owner_notes=%s WHERE id=%s",
-                            (final_approved_price, owner_comment, r_row['id'])
+                            "UPDATE UnitInstallments SET status='ملغي (تم تقسيم الربع بموافقة المالك)', collection_stage='تم السداد / مغلق' WHERE id=%s",
+                            (int(s_row['installment_id']),)
                         )
-                        new_unit_note = f"معاد طرحها للبيع بعد التقييم الجديد ({final_approved_price:,.0f} {curr_lbl}) - العميل السابق: {r_row['old_client_name']} (السعر السابق: {r_row['old_price']:,.0f})"
+                        # 2. إنشاء الدفعات المقسمة (2 أو 3 دفعات) آلياً
+                        for i in range(1, split_n + 1):
+                            inst_due = (base_due_dt + timedelta(days=30 * (i - 1))).strftime("%Y/%m/%d")
+                            part_label = f"{s_row['quarter_name']} - الدفعة ({i} من {split_n}) [استثناء مالك]"
+                            note_label = f"{s_row['phase_name']} | {part_label}"
+                            db_execute("""
+                                INSERT INTO UnitInstallments 
+                                (unit_code, project_name, client_name, phase_name, quarter_name, amount, currency, due_date, paid_date, status, notes, collection_stage, call_notes, is_split_exception)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '', 'مستحق (لم يُدفع)', %s, 'متابعة خدمة العملاء', %s, TRUE)
+                            """, (
+                                s_row['project_name'], s_row['project_name'], s_row['shareholder_name'],
+                                s_row['phase_name'], part_label, round(part_val, 2), curr_v, inst_due,
+                                note_label, f"مقسم بموافقة المالك: {own_note}"
+                            ))
+
+                        # 3. تحديث حالة الطلب
                         db_execute(
-                            "UPDATE RealEstateUnits SET status='متاحة', client_name='', total_price=%s, currency=%s, notes=%s, contract_file='' WHERE unit_code=%s",
-                            (final_approved_price, curr_lbl, new_unit_note, r_row['unit_code'])
+                            "UPDATE QuarterSplitRequests SET status='معتمد من المالك وتم التقسيم', owner_notes=%s WHERE id=%s",
+                            (own_note, s_row['id'])
                         )
-                        db_execute(
-                            "UPDATE UnitInstallments SET status='ملغي (إعادة بيع الوحدة)', collection_stage='تم السداد / مغلق' WHERE unit_code=%s AND client_name=%s AND status IN ('مستحق (لم يُدفع)', 'متأخر')",
-                            (r_row['unit_code'], r_row['old_client_name'])
-                        )
-                        log_event("اعتماد المالك لإعادة بيع وحدة", f"الوحدة: {r_row['unit_code']} - السعر الجديد: {final_approved_price} {curr_lbl}")
-                        st.success(f"تم اعتماد التقييم الجديد وعرض الوحدة ({r_row['unit_code']}) كـ 'متاحة' للبيع بالسعر الجديد ({final_approved_price:,.2f} {curr_lbl})!")
+                        log_event("اعتماد المالك لتقسيم ربع تنفيذ", f"المساهم: {s_row['shareholder_name']} - {s_row['quarter_name']} إلى {split_n} دفعات")
+                        st.success(f"✅ تم اعتماد الاستثناء وتقسيم الربع آلياً إلى ({split_n}) دفعات في كشف حساب المساهم!")
                         st.rerun()
-                        
-                    if btn_c2.button("❌ رفض طلب إعادة البيع", key=f"rej_res_{r_row['id']}", use_container_width=True):
+
+                    if bc2.button("❌ رفض طلب التقسيم (يلتزم بسداد الربع دفعة واحدة)", key=f"{key_prefix}rej_sp_{s_row['id']}", use_container_width=True):
                         db_execute(
-                            "UPDATE UnitResaleRequests SET status='مرفوض من المالك', owner_notes=%s WHERE id=%s",
-                            (owner_comment, r_row['id'])
+                            "UPDATE QuarterSplitRequests SET status='مرفوض من المالك (يسدد دفعة واحدة)', owner_notes=%s WHERE id=%s",
+                            (own_note, s_row['id'])
                         )
-                        log_event("رفض طلب إعادة بيع وحدة", f"الوحدة: {r_row['unit_code']}")
+                        log_event("رفض تقسيم ربع تنفيذ", f"المساهم: {s_row['shareholder_name']}")
                         st.rerun()
             st.divider()
 
+    # 2. نموذج تقديم طلب استثناء لتقسيم ربع تنفيذ
     if can_request:
-        sold_or_res_units = units_df[units_df['status'].isin(['مباعة', 'محجوزة'])] if not units_df.empty else pd.DataFrame()
-        with st.form("request_unit_resale_form"):
-            st.markdown("#### 📝 تقديم طلب إعادة تقييم وحدة لإعادة بيعها (يرسل للمالك للموافقة)")
-            c1, c2, c3 = st.columns([2, 1, 1])
-            if not sold_or_res_units.empty:
-                u_list = (
-                    sold_or_res_units['unit_code'].fillna('') + " | " + 
-                    sold_or_res_units['project_name'].fillna('') + " | العميل: " + 
-                    sold_or_res_units['client_name'].fillna('') + " | السعر الحالي: " + 
-                    sold_or_res_units['total_price'].fillna(0).astype(str)
+        with st.form(f"{key_prefix}req_quarter_split_form"):
+            st.markdown("#### 📝 تقديم طلب استثناء لمالك الشركة لتقسيم ربع تنفيذ لمساهم")
+            if not unpaid_q_df.empty:
+                q_opts = (
+                    unpaid_q_df['id'].astype(str) + " | " +
+                    unpaid_q_df['project_name'].fillna('') + " | المساهم: " +
+                    unpaid_q_df['client_name'].fillna('') + " | " +
+                    unpaid_q_df['phase_name'].fillna('') + " - " +
+                    unpaid_q_df['quarter_name'].fillna('') + " | المبلغ: " +
+                    unpaid_q_df['amount'].astype(str) + " " +
+                    unpaid_q_df['currency'].fillna('')
                 ).tolist()
-                sel_u_resale = c1.selectbox("اختر الوحدة المباعة/المحجوزة المراد إعادة تقييمها وبيعها:", u_list)
+                sel_q_str = st.selectbox("اختر مطالبة الربع غير المسددة المراد تقسيمها:", q_opts)
             else:
-                sel_u_resale = c1.text_input("كود الوحدة (لا توجد وحدات مباعة حالياً)")
-                
-            new_eval_price = c2.number_input("السعر التقييمي الجديد المقترح *", min_value=0.0, step=5000.0)
-            res_curr = c3.selectbox("العملة", CURRENCY_OPTIONS, key="resale_curr")
-            resale_reason = st.text_input("سبب إعادة البيع وتفاصيل التقييم الجديد (مثال: تعثر العميل وسحب الوحدة بعد تصعيد الشؤون القانونية) *")
-            
-            if st.form_submit_button("إرسال التقييم الجديد للمالك للموافقة 🚀", type="primary"):
-                if new_eval_price > 0 and sel_u_resale and resale_reason.strip():
-                    if " | " in str(sel_u_resale):
-                        parts = str(sel_u_resale).split(" | ")
-                        u_code_v = parts[0].strip()
-                        u_proj_v = parts[1].strip()
-                        old_cl_v = parts[2].replace("العميل:", "").strip()
-                        try:
-                            old_pr_v = float(parts[3].replace("السعر الحالي:", "").strip())
-                        except:
-                            old_pr_v = 0.0
-                    else:
-                        u_code_v = str(sel_u_resale).strip()
-                        u_proj_v = "غير محدد"
-                        old_cl_v = "غير محدد"
-                        old_pr_v = 0.0
-                        
-                    db_execute(
-                        "INSERT INTO UnitResaleRequests (unit_code, project_name, old_client_name, old_price, new_evaluated_price, currency, reason, requested_by, request_date, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'بانتظار موافقة المالك')",
-                        (u_code_v, u_proj_v, old_cl_v, old_pr_v, new_eval_price, res_curr, resale_reason.strip(), st.session_state.get('username', 'موظف'), get_egypt_time().strftime("%Y/%m/%d"))
-                    )
-                    log_event("طلب إعادة تقييم وإعادة بيع وحدة", f"الوحدة: {u_code_v} - التقييم الجديد: {new_eval_price} {res_curr}")
-                    st.success("تم إرسال طلب إعادة التقييم وإعادة البيع إلى المالك للموافقة عليه!")
+                sel_q_str = ""
+                st.info("لا توجد مطالبات أرباع غير مسددة حالياً لتقسيمها.")
+
+            c1, c2 = st.columns(2)
+            split_choice = c1.radio("عدد الدفعات المطلوب تقسيم الربع عليها (استثناء):", [2, 3], format_func=lambda x: f"تقسيم الربع على دفعتين (مرحلتين - 50% لكل دفعة)" if x == 2 else f"تقسيم الربع على 3 دفعات (3 مراحل - 33.3% لكل دفعة)", horizontal=True)
+            split_reason = c2.text_input("سبب طلب الاستثناء (يُعرض على مالك الشركة) *")
+
+            if st.form_submit_button("إرسال طلب الاستثناء لمالك الشركة للموافقة 🚀", type="primary"):
+                if sel_q_str and split_reason.strip():
+                    inst_id_v = int(sel_q_str.split(" | ")[0])
+                    row_match = unpaid_q_df[unpaid_q_df['id'] == inst_id_v].iloc[0]
+                    db_execute("""
+                        INSERT INTO QuarterSplitRequests 
+                        (installment_id, project_name, shareholder_name, phase_name, quarter_name, original_amount, currency, split_count, reason, requested_by, request_date, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'بانتظار موافقة المالك')
+                    """, (
+                        inst_id_v, row_match['project_name'], row_match['client_name'],
+                        row_match['phase_name'], row_match['quarter_name'], float(row_match['amount']),
+                        row_match['currency'], int(split_choice), split_reason.strip(),
+                        st.session_state.get('username', 'موظف'), get_egypt_time().strftime("%Y/%m/%d")
+                    ))
+                    log_event("طلب استثناء تقسيم ربع تنفيذ", f"المساهم: {row_match['client_name']} - {row_match['quarter_name']} إلى {split_choice} دفعات")
+                    st.success("تم إرسال طلب الاستثناء إلى مالك الشركة (Owner) وبانتظار اعتماده!")
                     st.rerun()
                 else:
-                    st.error("يرجى اختيار الوحدة وكتابة السعر التقييمي الجديد والسبب.")
+                    st.error("يرجى اختيار مطالبة الربع وكتابة سبب الاستثناء.")
 
-    st.markdown("#### 📋 سجل عمليات إعادة التقييم وإعادة بيع الوحدات")
-    if not resale_df.empty:
-        disp_resale = resale_df.drop(columns=['id']).copy()
-        disp_resale.columns = ['كود الوحدة', 'المشروع', 'العميل السابق', 'السعر السابق', 'السعر التقييمي الجديد', 'العملة', 'السبب', 'مقدم الطلب', 'تاريخ الطلب', 'حالة موافقة المالك', 'ملاحظات المالك']
-        st.dataframe(disp_resale, use_container_width=True, hide_index=True)
+    st.markdown("#### 📋 سجل طلبات استثناء تقسيم الأرباع وقرارات المالك")
+    if not split_reqs_df.empty:
+        disp_sp = split_reqs_df[['project_name', 'shareholder_name', 'phase_name', 'quarter_name', 'original_amount', 'currency', 'split_count', 'reason', 'requested_by', 'request_date', 'status', 'owner_notes']].copy()
+        disp_sp.columns = ['الاتحاد', 'المالك المساهم', 'المرحلة', 'الربع', 'المبلغ الأصلي', 'العملة', 'عدد الدفعات', 'السبب', 'مقدم الطلب', 'تاريخ الطلب', 'حالة موافقة المالك', 'قرار المالك']
+        st.dataframe(disp_sp, use_container_width=True, hide_index=True)
     else:
-        st.info("لا توجد طلبات إعادة بيع مسجلة حتى الآن.")
+        st.info("لا توجد طلبات استثناء لتقسيم الأرباع مسجلة حتى الآن.")
+
+def render_unit_resale_module(mode="sales"):
+    render_quarter_split_exception_module(mode=mode, key_prefix="resale_compat_")
 
 # ==========================================
-# 6. موديول العملاء الشامل + دورة تصعيد المتأخرات (شامل تحديد العملة)
+# 6. منظومة اتحاد الملاك المساهمين، الأرباع الـ 4، وأولوية اختيار الوحدات المميزة
 # ==========================================
-def render_clients_and_crm_module(mode="view"):
+def calculate_shareholder_priority_ranking(sh_df, inst_df, project_filter="الكل"):
+    """ترتيب الملاك المساهمين آلياً حسب أسبقية السداد الفعلي ونسبة الالتزام لتحديد أولوية اختيار الوحدات المميزة"""
+    if sh_df.empty:
+        return pd.DataFrame()
+
+    filtered_sh = sh_df if project_filter == "الكل" else sh_df[sh_df['project_name'] == project_filter]
+    if filtered_sh.empty:
+        return pd.DataFrame()
+
+    ranking_rows = []
+    for _, sh in filtered_sh.iterrows():
+        sh_name = sh['name']
+        sh_proj = sh['project_name']
+        sh_inst = inst_df[(inst_df['client_name'] == sh_name) & (~inst_df['status'].str.contains('ملغي', na=False))] if not inst_df.empty else pd.DataFrame()
+
+        total_due_amt = float(sh_inst['amount'].fillna(0).sum()) if not sh_inst.empty else 0.0
+        paid_rows = sh_inst[sh_inst['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر'])] if not sh_inst.empty else pd.DataFrame()
+        total_paid_amt = float(paid_rows['amount'].fillna(0).sum()) if not paid_rows.empty else 0.0
+        
+        paid_ratio = (total_paid_amt / total_due_amt * 100.0) if total_due_amt > 0 else 0.0
+        on_time_cnt = len(sh_inst[sh_inst['status'].isin(['مدفوع', 'مدفوع في الموعد'])]) if not sh_inst.empty else 0
+        late_cnt = len(sh_inst[sh_inst['status'].isin(['مدفوع متأخر', 'متأخر'])]) if not sh_inst.empty else 0
+
+        # حساب سرعة وأسبقية السداد باليوم (كلما دفع مبكراً قبل الاستحقاق أو في تاريخ أسبق كلما زادت أولويته)
+        speed_days_list = []
+        valid_paid_dates = []
+        if not paid_rows.empty:
+            for _, p_r in paid_rows.iterrows():
+                p_dt_str = str(p_r['paid_date']).strip()
+                d_dt_str = str(p_r['due_date']).strip()
+                if p_dt_str and p_dt_str != 'None':
+                    valid_paid_dates.append(p_dt_str)
+                    try:
+                        p_dt = datetime.strptime(p_dt_str[:10], "%Y/%m/%d")
+                        d_dt = datetime.strptime(d_dt_str[:10], "%Y/%m/%d")
+                        # الفرق بالأيام (سالب يعني دفع قبل الموعد، صفر في الموعد، موجب متأخر)
+                        speed_days_list.append((p_dt - d_dt).days)
+                    except:
+                        pass
+
+        avg_delay_days = sum(speed_days_list) / len(speed_days_list) if speed_days_list else 9999.0
+        last_paid_date = max(valid_paid_dates) if valid_paid_dates else "9999/99/99"
+        has_split_exc = bool(sh_inst['is_split_exception'].any()) if (not sh_inst.empty and 'is_split_exception' in sh_inst.columns) else False
+
+        ranking_rows.append({
+            'id': sh['id'],
+            'project_name': sh_proj,
+            'name': sh_name,
+            'land_share_pct': float(sh['land_share_pct'] or 0.0),
+            'land_share_amount': float(sh['land_share_amount'] or 0.0),
+            'currency': sh['currency'] or 'ج.م (EGP)',
+            'total_required': total_due_amt,
+            'total_paid': total_paid_amt,
+            'paid_ratio': round(paid_ratio, 1),
+            'on_time_cnt': on_time_cnt,
+            'late_cnt': late_cnt,
+            'avg_delay_days': avg_delay_days,
+            'last_paid_date': last_paid_date if last_paid_date != "9999/99/99" else "لم يسدد بعد",
+            '_sort_paid_has': 1 if total_paid_amt > 0 else 0,
+            '_sort_no_split': 0 if has_split_exc else 1,
+            '_sort_date': last_paid_date,
+            'assigned_unit': sh.get('assigned_unit') or 'لم يخصص بعد'
+        })
+
+    rank_df = pd.DataFrame(ranking_rows)
+    if rank_df.empty:
+        return rank_df
+
+    # الترتيب: 1. أعلى نسبة سداد والتزام، 2. من سدد الربع دفعة واحدة بدون تقسيم، 3. الأسرع سداداً (أقل تأخيراً/مبكراً)، 4. أسبقية تاريخ السداد الفعلي
+    rank_df = rank_df.sort_values(
+        by=['_sort_paid_has', 'paid_ratio', '_sort_no_split', 'avg_delay_days', '_sort_date', 'total_paid'],
+        ascending=[False, False, False, True, True, False]
+    ).reset_index(drop=True)
+
+    medals = []
+    for idx in range(len(rank_df)):
+        order_num = idx + 1
+        if order_num == 1:
+            medals.append("🥇 الأولوية (1) - اختيار أول مميز")
+        elif order_num == 2:
+            medals.append("🥈 الأولوية (2) - اختيار ثاني")
+        elif order_num == 3:
+            medals.append("🥉 الأولوية (3) - اختيار ثالث")
+        else:
+            medals.append(f"الترتيب ({order_num})")
+    rank_df['priority_badge'] = medals
+    return rank_df
+
+def render_clients_and_crm_module(mode="view", key_prefix=""):
+    ensure_shareholders_union_schema()
     is_sales = (mode == "sales")
     is_accountant = (mode == "accountant")
     is_legal = (mode == "legal")
     is_owner = (mode == "owner")
+    can_edit = is_sales or is_accountant or is_owner
     can_delete = is_sales or is_accountant or is_owner
     
-    st.header("👥 إدارة العملاء، التحصيل والتصعيد، إعادة البيع، وكشف الحساب")
+    st.header("🤝 منظومة اتحاد الملاك المساهمين، الأرباع الـ 4، وأولوية اختيار الوحدات")
     
     crm_tabs = st.tabs([
-        "📊 تقييم العميل وكشف الحساب (PDF)",
-        "📞 متابعة التحصيل ودورة تصعيد المتأخرات", 
-        "🔄 إعادة تقييم وإعادة بيع الوحدات",
-        "📇 سجل بيانات العملاء", 
-        "🏢 الوحدات العقارية"
+        "🥇 أولوية اختيار الوحدات المميزة وكشف الحساب (PDF)",
+        "🏗️ مراحل التنفيذ والأرباع الـ 4 والتحصيل والتصعيد", 
+        "👑 استثناء المالك لتقسيم ربع التنفيذ (دفعتين أو 3)",
+        "🤝 سجل الملاك المساهمين وحصص الأرض (%)"
     ])
     
     conn = get_db_connection()
     try:
-        clients_df = pd.read_sql_query("SELECT id, name, phone, national_id, address, notes FROM Clients ORDER BY name ASC", conn)
-    except:
-        clients_df = pd.DataFrame(columns=['id', 'name', 'phone', 'national_id', 'address', 'notes'])
-        
-    try:
-        units_df = pd.read_sql_query("SELECT id, project_name, unit_code, status, client_name, total_price, COALESCE(currency, 'ج.م (EGP)') as currency, notes FROM RealEstateUnits ORDER BY id DESC", conn)
-    except:
-        units_df = pd.DataFrame(columns=['id', 'project_name', 'unit_code', 'status', 'client_name', 'total_price', 'currency', 'notes'])
-        
-    try:
-        inst_df = pd.read_sql_query("SELECT id, unit_code, client_name, amount, COALESCE(currency, 'ج.م (EGP)') as currency, due_date, paid_date, status, notes, COALESCE(collection_stage, 'متابعة خدمة العملاء') as collection_stage, COALESCE(call_notes, '') as call_notes FROM UnitInstallments ORDER BY due_date ASC", conn)
-    except:
-        inst_df = pd.DataFrame(columns=['id', 'unit_code', 'client_name', 'amount', 'currency', 'due_date', 'paid_date', 'status', 'notes', 'collection_stage', 'call_notes'])
-    conn.close()
-    
-    client_names_list = clients_df['name'].dropna().tolist() if not clients_df.empty else []
+        sh_df = pd.read_sql_query("SELECT id, name, phone, national_id, address, project_name, land_share_pct, land_share_amount, COALESCE(currency, 'ج.م (EGP)') as currency, COALESCE(assigned_unit, 'لم يخصص بعد') as assigned_unit, notes FROM Shareholders ORDER BY project_name ASC, land_share_pct DESC", conn)
+    except Exception:
+        sh_df = pd.DataFrame(columns=['id', 'name', 'phone', 'national_id', 'address', 'project_name', 'land_share_pct', 'land_share_amount', 'currency', 'assigned_unit', 'notes'])
 
+    try:
+        inst_df = pd.read_sql_query("""
+            SELECT id, COALESCE(project_name, unit_code) as project_name, unit_code, client_name, 
+                   COALESCE(phase_name, 'مرحلة تنفيذ') as phase_name, 
+                   COALESCE(quarter_name, 'الربع الأول (Q1)') as quarter_name,
+                   amount, COALESCE(currency, 'ج.م (EGP)') as currency, 
+                   due_date, paid_date, status, notes, 
+                   COALESCE(collection_stage, 'متابعة خدمة العملاء') as collection_stage, 
+                   COALESCE(call_notes, '') as call_notes,
+                   COALESCE(is_split_exception, FALSE) as is_split_exception
+            FROM UnitInstallments ORDER BY due_date ASC, id ASC
+        """, conn)
+    except Exception:
+        inst_df = pd.DataFrame(columns=['id', 'project_name', 'unit_code', 'client_name', 'phase_name', 'quarter_name', 'amount', 'currency', 'due_date', 'paid_date', 'status', 'notes', 'collection_stage', 'call_notes', 'is_split_exception'])
+    conn.close()
+
+    # =========================================================
+    # التبويب 1: أولوية اختيار الوحدات المميزة + كشف حساب المساهم
+    # =========================================================
     with crm_tabs[0]:
-        st.subheader("📊 التقييم الائتماني للعميل وإصدار كشف الحساب (Statement of Account)")
-        
-        all_known_clients = sorted(list(set(
-            client_names_list + 
-            (units_df['client_name'].dropna().unique().tolist() if not units_df.empty else []) +
-            (inst_df['client_name'].dropna().unique().tolist() if not inst_df.empty else [])
-        )))
-        all_known_clients = [c for c in all_known_clients if str(c).strip() != ""]
-        
-        if not all_known_clients:
-            st.info("يرجى تسجيل عملاء وأقساط أولاً لعرض التقييم وكشف الحساب.")
+        st.subheader("🥇 ترتيب أولوية الملاك المساهمين لاختيار الوحدات المميزة (حسب أسبقية السداد)")
+        st.info("💡 يرتب النظام الملاك المساهمين داخل كل اتحاد آلياً بناءً على **نسبة الالتزام، السداد الكامل للربع بدون تقسيم، وأسبقية تاريخ السداد الفعلي**، بحيث يحصل المالك الأسرع التزاماً وسداداً على **الأولوية رقم (1) 🥇** عند تقسيم الأرض واختيار الوحدات المميزة.")
+
+        proj_filter_list = ["الكل"] + [f"اتحاد {i}" for i in range(1, 46)]
+        sel_proj_rank = st.selectbox("🏗️ اختر المشروع (الاتحاد) لعرض ترتيب أولوية الملاك المساهمين:", proj_filter_list, key=f"{key_prefix}proj_rank_sel")
+
+        rank_df = calculate_shareholder_priority_ranking(sh_df, inst_df, project_filter=sel_proj_rank)
+        if not rank_df.empty:
+            disp_rank = rank_df[['priority_badge', 'project_name', 'name', 'land_share_pct', 'total_required', 'total_paid', 'paid_ratio', 'last_paid_date', 'assigned_unit']].copy()
+            disp_rank.columns = ['أولوية اختيار الوحدة', 'الاتحاد', 'اسم المالك المساهم', 'نسبة الأرض %', 'إجمالي المطالبات', 'إجمالي المسدد', 'نسبة السداد %', 'تاريخ آخر سداد فعلي', 'الوحدة المخصصة له']
+            st.dataframe(disp_rank, use_container_width=True, hide_index=True)
+
+            if can_edit:
+                with st.expander("🏢 تثبيت وتخصيص الوحدة المختارة للمساهم (حسب أولويته)"):
+                    ac1, ac2, ac3 = st.columns([2, 2, 1])
+                    sh_alloc_opts = rank_df['id'].astype(str) + " - " + rank_df['name'] + " (" + rank_df['priority_badge'] + ")"
+                    sel_sh_alloc = ac1.selectbox("اختر المساهم:", sh_alloc_opts, key=f"{key_prefix}alloc_sh")
+                    chosen_unit_txt = ac2.text_input("الوحدة المميزة المختارة (مثال: واجهة بحري - الدور الأول شقة 101):", key=f"{key_prefix}alloc_u")
+                    if ac3.button("تثبيت الوحدة ✅", key=f"{key_prefix}btn_alloc_u", type="primary"):
+                        sh_id_alloc = int(sel_sh_alloc.split(" - ")[0])
+                        db_execute("UPDATE Shareholders SET assigned_unit=%s WHERE id=%s", (chosen_unit_txt.strip(), sh_id_alloc))
+                        log_event("تخصيص وحدة لمساهم حسب الأولوية", f"مساهم رقم {sh_id_alloc} - الوحدة: {chosen_unit_txt}")
+                        st.success("تم تثبيت الوحدة المختارة للمساهم بنجاح!")
+                        st.rerun()
+
+            html_rank = generate_html_report(f"تقرير أولوية الملاك المساهمين لاختيار الوحدات المميزة ({sel_proj_rank})", disp_rank)
+            st.download_button("🖨️ طباعة كشف أولوية اختيار الوحدات (PDF)", data=html_rank, file_name="Shareholders_Priority.html", mime="text/html", key=f"{key_prefix}dl_prio_pdf")
         else:
-            selected_client_stmt = st.selectbox("👤 اختر العميل لعرض تقييمه وكشف حسابه المفصل:", all_known_clients)
-            
-            cl_info_row = clients_df[clients_df['name'] == selected_client_stmt] if not clients_df.empty else pd.DataFrame()
-            cl_phone_val = cl_info_row.iloc[0]['phone'] if not cl_info_row.empty else "غير مسجل"
-            
-            cl_units = units_df[units_df['client_name'] == selected_client_stmt] if not units_df.empty else pd.DataFrame()
-            cl_inst = inst_df[inst_df['client_name'] == selected_client_stmt] if not inst_df.empty else pd.DataFrame()
-            
-            main_curr = "ج.م (EGP)"
-            if not cl_inst.empty and 'currency' in cl_inst.columns:
-                main_curr = cl_inst.iloc[0]['currency']
-            elif not cl_units.empty and 'currency' in cl_units.columns:
-                main_curr = cl_units.iloc[0]['currency']
-                
-            total_contracts_val = cl_units['total_price'].fillna(0).sum() if not cl_units.empty else 0.0
-            paid_inst_val = cl_inst[cl_inst['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر'])]['amount'].fillna(0).sum() if not cl_inst.empty else 0.0
-            unpaid_inst_val = cl_inst[cl_inst['status'].isin(['مستحق (لم يُدفع)', 'متأخر'])]['amount'].fillna(0).sum() if not cl_inst.empty else 0.0
-            remaining_from_contract = max(0.0, total_contracts_val - paid_inst_val)
-            
-            badge_text, score_val, on_time_cnt, late_cnt = evaluate_client_commitment(cl_inst)
-            
-            st.markdown("---")
-            if score_val >= 80:
-                st.success(f"### تقييم التزام العميل: {badge_text}")
-            elif score_val >= 50:
-                st.warning(f"### تقييم التزام العميل: {badge_text}")
-            else:
-                st.error(f"### تقييم التزام العميل: {badge_text}")
-                
+            st.info("لا يوجد ملاك مساهمين مسجلين في هذا الاتحاد حالياً. يرجى إضافتهم من تبويب (سجل الملاك المساهمين).")
+
+        st.divider()
+        st.subheader("📄 إصدار كشف حساب تفصيلي لمالك مساهم (PDF)")
+        all_sh_names = sorted(list(set(
+            (sh_df['name'].dropna().tolist() if not sh_df.empty else []) +
+            (inst_df['client_name'].dropna().tolist() if not inst_df.empty else [])
+        )))
+        all_sh_names = [n for n in all_sh_names if str(n).strip() != ""]
+
+        if all_sh_names:
+            sel_sh_stmt = st.selectbox("👤 اختر المالك المساهم لعرض وطباعة كشف حسابه:", all_sh_names, key=f"{key_prefix}sh_stmt_sel")
+            sh_info = sh_df[sh_df['name'] == sel_sh_stmt] if not sh_df.empty else pd.DataFrame()
+            sh_inst_all = inst_df[inst_df['client_name'] == sel_sh_stmt] if not inst_df.empty else pd.DataFrame()
+            sh_inst_active = sh_inst_all[~sh_inst_all['status'].str.contains('ملغي', na=False)] if not sh_inst_all.empty else pd.DataFrame()
+
+            sh_pct_val = float(sh_info['land_share_pct'].iloc[0]) if not sh_info.empty else 0.0
+            sh_land_val = float(sh_info['land_share_amount'].iloc[0]) if not sh_info.empty else 0.0
+            sh_proj_val = sh_info['project_name'].iloc[0] if not sh_info.empty else "غير محدد"
+            sh_unit_val = sh_info['assigned_unit'].iloc[0] if not sh_info.empty else "لم يخصص بعد"
+            main_curr = sh_info['currency'].iloc[0] if not sh_info.empty else (sh_inst_active['currency'].iloc[0] if not sh_inst_active.empty else "ج.م (EGP)")
+
+            tot_req = float(sh_inst_active['amount'].fillna(0).sum()) if not sh_inst_active.empty else 0.0
+            tot_paid = float(sh_inst_active[sh_inst_active['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر'])]['amount'].fillna(0).sum()) if not sh_inst_active.empty else 0.0
+            tot_rem = max(0.0, tot_req - tot_paid)
+
+            badge_text, _, _, _ = evaluate_client_commitment(sh_inst_active)
+
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("💰 إجمالي قيمة التعاقدات", f"{total_contracts_val:,.2f} {main_curr}")
-            m2.metric("✅ إجمالي المسدد", f"{paid_inst_val:,.2f} {main_curr}")
-            m3.metric("⏳ المتبقي من التعاقد", f"{remaining_from_contract:,.2f} {main_curr}")
-            m4.metric("📌 أقساط منتظمة / متأخرة", f"{on_time_cnt} منتظم | {late_cnt} متأخر")
-            
-            st.markdown("#### 🏢 الوحدات المتعاقد عليها:")
-            if not cl_units.empty:
-                u_view = cl_units[['project_name', 'unit_code', 'status', 'total_price', 'currency', 'notes']].copy()
-                u_view.columns = ['المشروع', 'كود الوحدة', 'الحالة', 'سعر الوحدة', 'العملة', 'ملاحظات']
-                st.dataframe(u_view, use_container_width=True, hide_index=True)
-            else:
-                st.write("لا توجد وحدات مربوطة بهذا الاسم مباشرة.")
-                
-            st.markdown("#### 💸 جدول الأقساط والدفعات ومراحل المتابعة (كشف الحساب):")
-            if not cl_inst.empty:
-                stmt_table = cl_inst[['unit_code', 'notes', 'amount', 'currency', 'due_date', 'paid_date', 'status', 'collection_stage']].copy()
-                stmt_table.columns = ['الوحدة', 'البيان', 'قيمة القسط', 'العملة', 'تاريخ الاستحقاق', 'تاريخ السداد', 'حالة الدفع', 'مرحلة المتابعة/التصعيد']
-                
-                total_stmt_row = pd.DataFrame([{
-                    'الوحدة': 'الإجمالي',
-                    'البيان': f'إجمالي المسدد: {paid_inst_val:,.2f} | غير مسدد: {unpaid_inst_val:,.2f}',
-                    'قيمة القسط': cl_inst['amount'].fillna(0).sum(),
-                    'العملة': main_curr,
-                    'تاريخ الاستحقاق': '',
-                    'تاريخ السداد': '',
-                    'حالة الدفع': badge_text,
-                    'مرحلة المتابعة/التصعيد': ''
-                }])
-                stmt_table_with_total = pd.concat([stmt_table, total_stmt_row], ignore_index=True)
-                st.dataframe(stmt_table_with_total, use_container_width=True, hide_index=True)
-                
-                extra_summary = f"""
+            m1.metric("📐 نسبة المشاركة في الأرض", f"{sh_pct_val:.2f}% ({sh_proj_val})")
+            m2.metric("💰 إجمالي مطالبات الأرباع والأرض", f"{tot_req:,.2f} {main_curr}")
+            m3.metric("✅ إجمالي المسدد الفعلي", f"{tot_paid:,.2f} {main_curr}")
+            m4.metric("⏳ المتبقي على المساهم", f"{tot_rem:,.2f} {main_curr}")
+
+            if not sh_inst_all.empty:
+                stmt_tbl = sh_inst_all[['project_name', 'phase_name', 'quarter_name', 'amount', 'currency', 'due_date', 'paid_date', 'status', 'collection_stage']].copy()
+                stmt_tbl.columns = ['الاتحاد', 'المرحلة', 'الربع / الدفعة', 'المبلغ', 'العملة', 'تاريخ الاستحقاق', 'تاريخ السداد الفعلي', 'حالة الدفع', 'مرحلة المتابعة']
+                st.dataframe(stmt_tbl, use_container_width=True, hide_index=True)
+
+                extra_sum = f"""
                 <div class="summary-box">
-                    <div class="summary-item"><span>اسم العميل</span><strong>{selected_client_stmt}</strong></div>
-                    <div class="summary-item"><span>رقم الهاتف</span><strong>{cl_phone_val}</strong></div>
-                    <div class="summary-item"><span>إجمالي التعاقد</span><strong>{total_contracts_val:,.2f} {main_curr}</strong></div>
-                    <div class="summary-item"><span>إجمالي المسدد</span><strong style="color:green;">{paid_inst_val:,.2f} {main_curr}</strong></div>
-                    <div class="summary-item"><span>المتبقي</span><strong style="color:#b80000;">{remaining_from_contract:,.2f} {main_curr}</strong></div>
-                    <div class="summary-item"><span>تقييم الالتزام</span><strong>{badge_text}</strong></div>
+                    <div class="summary-item"><span>اسم المالك المساهم</span><strong>{sel_sh_stmt}</strong></div>
+                    <div class="summary-item"><span>المشروع ونسبة الأرض</span><strong>{sh_proj_val} ({sh_pct_val}%)</strong></div>
+                    <div class="summary-item"><span>حصة الأرض المالية</span><strong>{sh_land_val:,.2f} {main_curr}</strong></div>
+                    <div class="summary-item"><span>إجمالي المسدد</span><strong style="color:green;">{tot_paid:,.2f} {main_curr}</strong></div>
+                    <div class="summary-item"><span>المتبقي</span><strong style="color:#b80000;">{tot_rem:,.2f} {main_curr}</strong></div>
+                    <div class="summary-item"><span>الوحدة المخصصة</span><strong>{sh_unit_val}</strong></div>
                 </div>
                 """
-                
-                html_stmt = generate_html_report(f"كشف حساب عميل تفصيلي - {selected_client_stmt}", stmt_table_with_total, extra_summary_html=extra_summary)
+                html_sh_stmt = generate_html_report(f"كشف حساب مالك مساهم - {sel_sh_stmt}", stmt_tbl, extra_summary_html=extra_sum)
                 st.download_button(
-                    "🖨️ طباعة / تصدير كشف حساب العميل وتقييمه (PDF)",
-                    data=html_stmt,
-                    file_name=f"Client_Statement_{selected_client_stmt}_{get_egypt_time().strftime('%Y%m%d')}.html",
+                    "🖨️ طباعة / تصدير كشف حساب المساهم (PDF)",
+                    data=html_sh_stmt,
+                    file_name=f"Shareholder_Statement_{sel_sh_stmt}.html",
                     mime="text/html",
                     type="primary",
-                    use_container_width=True
+                    use_container_width=True,
+                    key=f"{key_prefix}dl_sh_stmt_btn"
                 )
-            else:
-                st.info("لا توجد أقساط مسجلة لهذا العميل لإصدار كشف الحساب.")
 
+    # =========================================================
+    # التبويب 2: مراحل التنفيذ والأرباع الـ 4 والتحصيل والتصعيد
+    # =========================================================
     with crm_tabs[1]:
-        st.subheader("📞 متابعة تحصيل الأقساط ودورة تصعيد المتأخرات")
-        st.markdown("""
-        **🔄 مسار الدورة المستندية لتحصيل المتأخرات:**
-        1️⃣ **خدمة العملاء:** تتواصل مع العميل **(مكالمة أولى)** ثم **(مكالمة ثانية)**، وإذا لم يدفع تقوم بـ **تحويله للشؤون القانونية**.
-        2️⃣ **الشؤون القانونية:** تتواصل مع العميل **(مكالمة إنذار قانوني)**، وإذا لم يستجب تقوم بـ **تصعيد الملف للمالك**.
-        3️⃣ **المالك (Owner):** يتدخل لاتخاذ القرار النهائي (منح مهلة أخيرة، تسوية، أو سحب الوحدة وإعادة تقييمها للبيع).
-        """)
+        st.subheader("🏗️ جدولة مراحل التنفيذ (الأرباع الـ 4) ومتابعة التحصيل والتصعيد")
         
-        sold_units = units_df[units_df['status'].isin(['مباعة', 'محجوزة'])] if not units_df.empty else pd.DataFrame()
-        
-        if is_sales:
-            with st.expander("➕ جدولة وإضافة قسط جديد للعميل (مع تحديد العملة)", expanded=True):
-                with st.form("add_client_installment"):
-                    c1, c2, c3, c4 = st.columns([2, 1.5, 1, 1.5])
-                    if not sold_units.empty:
-                        u_opts = sold_units['unit_code'].fillna('') + " | " + sold_units['client_name'].fillna('')
-                        sel_u_cl = c1.selectbox("اختر الوحدة والعميل", u_opts)
-                    elif client_names_list:
-                        sel_u_cl = c1.selectbox("اختر العميل", client_names_list)
-                    else:
-                        sel_u_cl = c1.text_input("كود الوحدة | اسم العميل")
+        if can_edit:
+            col_q_auto, col_q_single = st.columns(2)
+            
+            # 1. توزيع ربع تنفيذ آلياً على كل مساهمي الاتحاد حسب نسبهم في الأرض (%)
+            with col_q_auto:
+                with st.expander("⚡ توزيع تكلفة ربع تنفيذ آلياً على مساهمي الاتحاد (حسب نسبة كل مالك %)", expanded=True):
+                    with st.form(f"{key_prefix}auto_dist_quarter_form"):
+                        q_proj = st.selectbox("اختر المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)], key=f"{key_prefix}ap_proj")
+                        q_phase = st.text_input("اسم مرحلة التنفيذ (مثال: مرحلة الأساسات / الهيكل الخرساني)", value="مرحلة الإنشاءات")
+                        q_quarter = st.selectbox("اختر الربع (من الأرباع الـ 4 للمرحلة)", QUARTER_OPTIONS, key=f"{key_prefix}ap_q")
                         
-                    i_amt = c2.number_input("قيمة القسط", min_value=0.0, step=1000.0)
-                    i_curr = c3.selectbox("العملة", CURRENCY_OPTIONS, key="cl_inst_curr")
-                    i_due = c4.date_input("تاريخ الاستحقاق")
-                    i_notes = st.text_input("بيان القسط (مثال: دفعة تعاقد / قسط ربع سنوي 1)")
-                    
-                    if st.form_submit_button("إضافة القسط لجدول التحصيل ➕", type="primary"):
-                        if i_amt > 0 and sel_u_cl:
-                            if " | " in str(sel_u_cl):
-                                parts = str(sel_u_cl).split(" | ")
-                                u_code_val = parts[0].strip()
-                                u_cl_val = parts[1].strip() if len(parts) > 1 else ""
+                        qc1, qc2 = st.columns(2)
+                        q_total_cost = qc1.number_input("إجمالي تكلفة هذا الربع للمشروع بالكامل", min_value=0.0, step=10000.0)
+                        q_curr = qc2.selectbox("العملة", CURRENCY_OPTIONS, key=f"{key_prefix}ap_curr")
+                        q_due = st.date_input("تاريخ استحقاق سداد الربع (دفعة واحدة)")
+                        
+                        if st.form_submit_button("توزيع الربع آلياً على جميع مساهمي الاتحاد 📊", type="primary", use_container_width=True):
+                            proj_shs = sh_df[sh_df['project_name'] == q_proj] if not sh_df.empty else pd.DataFrame()
+                            if proj_shs.empty:
+                                st.error(f"⚠️ لا يوجد ملاك مساهمين مسجلين في ({q_proj}) بعد! سجلهم أولاً في تبويب (سجل الملاك المساهمين).")
+                            elif q_total_cost <= 0:
+                                st.error("يرجى إدخال إجمالي تكلفة الربع للمشروع.")
                             else:
-                                u_code_val = "وحدة عقارية"
-                                u_cl_val = str(sel_u_cl).strip()
-                                
-                            db_execute(
-                                "INSERT INTO UnitInstallments (unit_code, client_name, amount, currency, due_date, paid_date, status, notes, collection_stage, call_notes) VALUES (%s, %s, %s, %s, %s, '', 'مستحق (لم يُدفع)', %s, 'متابعة خدمة العملاء', '')",
-                                (u_code_val, u_cl_val, i_amt, i_curr, i_due.strftime("%Y/%m/%d"), i_notes)
-                            )
-                            log_event("جدولة قسط عميل (خدمة عملاء)", f"عميل: {u_cl_val} - وحدة: {u_code_val} - مبلغ: {i_amt} {i_curr}")
-                            st.success("تم جدولة القسط بنجاح وسمّع في شاشة الحسابات لمتابعة التحصيل!")
-                            st.rerun()
-                        else:
-                            st.error("يرجى تحديد العميل/الوحدة وإدخال قيمة القسط.")
+                                count_inserted = 0
+                                for _, sh_r in proj_shs.iterrows():
+                                    pct = float(sh_r['land_share_pct'] or 0.0)
+                                    if pct > 0:
+                                        sh_amount = round((q_total_cost * pct) / 100.0, 2)
+                                        note_desc = f"{q_phase} - {q_quarter} (نسبة المساهم {pct}%)"
+                                        db_execute("""
+                                            INSERT INTO UnitInstallments 
+                                            (unit_code, project_name, client_name, phase_name, quarter_name, amount, currency, due_date, paid_date, status, notes, collection_stage, call_notes, is_split_exception)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '', 'مستحق (لم يُدفع)', %s, 'متابعة خدمة العملاء', '', FALSE)
+                                        """, (q_proj, q_proj, sh_r['name'], q_phase, q_quarter, sh_amount, q_curr, q_due.strftime("%Y/%m/%d"), note_desc))
+                                        count_inserted += 1
+                                log_event("توزيع ربع تنفيذ آلياً", f"{q_proj} - {q_phase} ({q_quarter}) بقيمة كلية {q_total_cost} على {count_inserted} مساهم")
+                                st.success(f"✅ تم توزيع ({q_quarter}) آلياً على ({count_inserted}) مالك مساهم في ({q_proj}) كلٌ حسب نسبته!")
+                                st.rerun()
 
+            # 2. إضافة ربع تنفيذ لمساهم محدد بشكل فردي
+            with col_q_single:
+                with st.expander("➕ تسجيل مطالبة ربع تنفيذ لمالك مساهم محدد", expanded=True):
+                    with st.form(f"{key_prefix}single_sh_quarter_form"):
+                        s_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)], key=f"{key_prefix}sp_proj")
+                        sh_names_in_list = sh_df['name'].dropna().unique().tolist() if not sh_df.empty else []
+                        if sh_names_in_list:
+                            s_sh_name = st.selectbox("اختر المالك المساهم", sh_names_in_list, key=f"{key_prefix}sp_sh")
+                        else:
+                            s_sh_name = st.text_input("اسم المالك المساهم")
+                            
+                        sc1, sc2 = st.columns(2)
+                        s_phase = sc1.text_input("مرحلة التنفيذ", value="مرحلة الإنشاءات", key=f"{key_prefix}sp_ph")
+                        s_quarter = sc2.selectbox("الربع (1 / 2 / 3 / 4)", QUARTER_OPTIONS, key=f"{key_prefix}sp_q")
+                        
+                        sc3, sc4, sc5 = st.columns(3)
+                        s_amt = sc3.number_input("المبلغ المطلوب (دفعة واحدة)", min_value=0.0, step=5000.0)
+                        s_curr = sc4.selectbox("العملة", CURRENCY_OPTIONS, key=f"{key_prefix}sp_curr")
+                        s_due = sc5.date_input("تاريخ الاستحقاق", key=f"{key_prefix}sp_due")
+                        
+                        if st.form_submit_button("إضافة مطالبة الربع للمساهم ➕", type="primary", use_container_width=True):
+                            if s_sh_name and s_amt > 0:
+                                note_desc = f"{s_phase} - {s_quarter}"
+                                db_execute("""
+                                    INSERT INTO UnitInstallments 
+                                    (unit_code, project_name, client_name, phase_name, quarter_name, amount, currency, due_date, paid_date, status, notes, collection_stage, call_notes, is_split_exception)
+                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '', 'مستحق (لم يُدفع)', %s, 'متابعة خدمة العملاء', '', FALSE)
+                                """, (s_proj, s_proj, s_sh_name.strip(), s_phase, s_quarter, s_amt, s_curr, s_due.strftime("%Y/%m/%d"), note_desc))
+                                log_event("إضافة ربع تنفيذ لمساهم", f"المساهم: {s_sh_name} - {s_proj} - {s_quarter}: {s_amt} {s_curr}")
+                                st.success("تم تسجيل مطالبة الربع للمساهم بنجاح!")
+                                st.rerun()
+                            else:
+                                st.error("يرجى اختيار المساهم وإدخال المبلغ.")
+
+        # متابعة التحصيل والتصعيد وتأكيد تاريخ السداد الفعلي (الذي يحدد الأولوية)
         if not inst_df.empty:
-            unpaid_df = inst_df[~inst_df['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر', 'ملغي (إعادة بيع الوحدة)'])]
+            unpaid_df = inst_df[~inst_df['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر']) & (~inst_df['status'].str.contains('ملغي', na=False))]
             
             if is_sales and not unpaid_df.empty:
-                st.markdown("#### 📞 شاشة متابعة وتصعيد خدمة العملاء (المكالمة 1 $\leftarrow$ المكالمة 2 $\leftarrow$ تحويل للشؤون القانونية)")
+                st.markdown("#### 📞 متابعة وتصعيد خدمة العملاء مع المساهمين المتأخرين")
                 cs_df = unpaid_df[unpaid_df['collection_stage'].isin(['متابعة خدمة العملاء', 'تمت المكالمة الأولى (خدمة العملاء)', 'تمت المكالمة الثانية (خدمة العملاء)'])]
                 if not cs_df.empty:
-                    cs_opts = cs_df['id'].astype(str) + " - العميل: " + cs_df['client_name'].fillna('') + " | وحدة: " + cs_df['unit_code'].fillna('') + " | مبلغ: " + cs_df['amount'].astype(str) + " " + cs_df['currency'].fillna('') + " | المرحلة: " + cs_df['collection_stage'].fillna('')
-                    sel_cs_inst = st.selectbox("اختر القسط المتأخر لتسجيل المكالمة أو التصعيد:", cs_opts, key="cs_esc_sel")
-                    cs_note_input = st.text_input("ملاحظة المكالمة (رد العميل / سبب التأخير):", key="cs_note_in")
+                    cs_opts = cs_df['id'].astype(str) + " - المساهم: " + cs_df['client_name'].fillna('') + " | " + cs_df['project_name'].fillna('') + " (" + cs_df['quarter_name'].fillna('') + ") | " + cs_df['amount'].astype(str) + " " + cs_df['currency'].fillna('')
+                    sel_cs_inst = st.selectbox("اختر مطالبة المساهم:", cs_opts, key=f"{key_prefix}cs_esc_sel")
+                    cs_note_input = st.text_input("ملاحظة المكالمة:", key=f"{key_prefix}cs_note_in")
                     
                     b1, b2, b3, b4 = st.columns(4)
                     target_id = int(sel_cs_inst.split(" - ")[0])
                     old_notes = cs_df[cs_df['id'] == target_id].iloc[0]['call_notes'] or ""
                     now_tag = get_egypt_time().strftime("%Y/%m/%d %H:%M")
                     
-                    if b1.button("📞 1. تسجيل المكالمة الأولى", use_container_width=True):
-                        new_log = f"{old_notes} | [مكالمة 1 خدمة عملاء {now_tag}: {cs_note_input or 'تم الاتصال ولم يدفع'}]".strip(" |")
+                    if b1.button("📞 1. المكالمة الأولى", key=f"{key_prefix}b1_cs", use_container_width=True):
+                        new_log = f"{old_notes} | [مكالمة 1 خدمة عملاء {now_tag}: {cs_note_input or 'تم الاتصال'}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='تمت المكالمة الأولى (خدمة العملاء)', status='متأخر', call_notes=%s WHERE id=%s", (new_log, target_id))
-                        log_event("مكالمة تحصيل 1 (خدمة عملاء)", f"قسط رقم {target_id}")
-                        st.success("تم تسجيل المكالمة الأولى لخدمة العملاء!")
                         st.rerun()
-                        
-                    if b2.button("📞 2. تسجيل المكالمة الثانية", use_container_width=True):
-                        new_log = f"{old_notes} | [مكالمة 2 خدمة عملاء {now_tag}: {cs_note_input or 'تم الاتصال للمرة الثانية ولم يدفع'}]".strip(" |")
+                    if b2.button("📞 2. المكالمة الثانية", key=f"{key_prefix}b2_cs", use_container_width=True):
+                        new_log = f"{old_notes} | [مكالمة 2 خدمة عملاء {now_tag}: {cs_note_input or 'تم الاتصال 2'}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='تمت المكالمة الثانية (خدمة العملاء)', status='متأخر', call_notes=%s WHERE id=%s", (new_log, target_id))
-                        log_event("مكالمة تحصيل 2 (خدمة عملاء)", f"قسط رقم {target_id}")
-                        st.success("تم تسجيل المكالمة الثانية لخدمة العملاء!")
                         st.rerun()
-                        
-                    if b3.button("⚖️ 3. تحويل للشؤون القانونية", type="primary", use_container_width=True):
-                        new_log = f"{old_notes} | [تحويل للشؤون القانونية {now_tag}: {cs_note_input or 'لم يستجب بعد مكالمتين'}]".strip(" |")
+                    if b3.button("⚖️ 3. تحويل للشؤون القانونية", key=f"{key_prefix}b3_cs", type="primary", use_container_width=True):
+                        new_log = f"{old_notes} | [تحويل للقانونية {now_tag}: {cs_note_input}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='محول للشؤون القانونية', status='متأخر', call_notes=%s WHERE id=%s", (new_log, target_id))
-                        log_event("تصعيد قسط للشؤون القانونية", f"قسط رقم {target_id}")
-                        st.warning("⚖️ تم تحويل ملف القسط المتأخر إلى الشؤون القانونية!")
                         st.rerun()
-                        
-                    if b4.button("✅ تم التحصيل والسداد", use_container_width=True):
-                        new_log = f"{old_notes} | [تم التحصيل {now_tag}: {cs_note_input}]".strip(" |")
+                    if b4.button("✅ تم السداد وتثبيت الأسبقية", key=f"{key_prefix}b4_cs", use_container_width=True):
+                        new_log = f"{old_notes} | [تم السداد {now_tag}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET status='مدفوع في الموعد', paid_date=%s, collection_stage='تم السداد / مغلق', call_notes=%s WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), new_log, target_id))
-                        log_event("تحصيل قسط (خدمة عملاء)", f"قسط رقم {target_id}")
-                        st.success("تم تأكيد السداد وإغلاق المتابعة!")
                         st.rerun()
-                else:
-                    st.success("لا توجد أقساط متأخرة في مرحلة خدمة العملاء حالياً.")
 
-            if is_legal:
-                st.markdown("#### ⚖️ الأقساط المتأخرة المحولة للشؤون القانونية (مكالمة الشؤون القانونية $\leftarrow$ تصعيد للمالك)")
+            if is_legal and not unpaid_df.empty:
+                st.markdown("#### ⚖️ مطالبات المساهمين المحولة للشؤون القانونية")
                 leg_df = unpaid_df[unpaid_df['collection_stage'].isin(['محول للشؤون القانونية', 'تمت مكالمة الشؤون القانونية'])]
                 if not leg_df.empty:
-                    leg_opts = leg_df['id'].astype(str) + " - العميل: " + leg_df['client_name'].fillna('') + " | وحدة: " + leg_df['unit_code'].fillna('') + " | مبلغ: " + leg_df['amount'].astype(str) + " " + leg_df['currency'].fillna('') + " | المرحلة: " + leg_df['collection_stage'].fillna('')
-                    sel_leg_inst = st.selectbox("اختر الملف المحول للشؤون القانونية:", leg_opts, key="leg_esc_sel")
+                    leg_opts = leg_df['id'].astype(str) + " - المساهم: " + leg_df['client_name'].fillna('') + " | " + leg_df['project_name'].fillna('') + " (" + leg_df['quarter_name'].fillna('') + ")"
+                    sel_leg_inst = st.selectbox("اختر الملف:", leg_opts, key=f"{key_prefix}leg_esc_sel")
                     target_leg_id = int(sel_leg_inst.split(" - ")[0])
                     old_leg_notes = leg_df[leg_df['id'] == target_leg_id].iloc[0]['call_notes'] or ""
-                    st.info(f"📜 **سجل مكالمات خدمة العملاء السابق:** {old_leg_notes if old_leg_notes else 'لا توجد ملاحظات'}")
-                    
-                    leg_note_input = st.text_input("ملاحظة مكالمة الشؤون القانونية / الإنذار:", key="leg_note_in")
+                    leg_note_input = st.text_input("ملاحظة الشؤون القانونية:", key=f"{key_prefix}leg_note_in")
                     lb1, lb2, lb3 = st.columns(3)
                     now_tag = get_egypt_time().strftime("%Y/%m/%d %H:%M")
-                    
-                    if lb1.button("📞 تسجيل مكالمة الشؤون القانونية (إنذار)", use_container_width=True):
-                        new_log = f"{old_leg_notes} | [مكالمة الشؤون القانونية {now_tag}: {leg_note_input or 'تم توجيه إنذار قانوني هاتفي'}]".strip(" |")
+                    if lb1.button("📞 تسجيل مكالمة إنذار قانوني", key=f"{key_prefix}lb1", use_container_width=True):
+                        new_log = f"{old_leg_notes} | [إنذار قانوني {now_tag}: {leg_note_input}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='تمت مكالمة الشؤون القانونية', call_notes=%s WHERE id=%s", (new_log, target_leg_id))
-                        log_event("مكالمة الشؤون القانونية لعميل متأخر", f"قسط رقم {target_leg_id}")
-                        st.success("تم توثيق مكالمة الشؤون القانونية!")
                         st.rerun()
-                        
-                    if lb2.button("👑 تصعيد للمالك (لعدم الاستجابة النهائية)", type="primary", use_container_width=True):
-                        new_log = f"{old_leg_notes} | [تصعيد للمالك {now_tag}: {leg_note_input or 'لم يستجب لمكالمة الشؤون القانونية'}]".strip(" |")
+                    if lb2.button("👑 تصعيد لمالك الشركة", key=f"{key_prefix}lb2", type="primary", use_container_width=True):
+                        new_log = f"{old_leg_notes} | [تصعيد للمالك {now_tag}: {leg_note_input}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='محول للمالك (لتدخل الإدارة العليا)', call_notes=%s WHERE id=%s", (new_log, target_leg_id))
-                        log_event("تصعيد عميل متأخر للمالك", f"قسط رقم {target_leg_id}")
-                        st.error("👑 تم تصعيد الملف إلى لوحة تحكم المالك للتدخل!")
                         st.rerun()
-                        
-                    if lb3.button("✅ استجاب العميل وتم السداد", use_container_width=True):
-                        new_log = f"{old_leg_notes} | [سداد بعد تدخل القانونية {now_tag}: {leg_note_input}]".strip(" |")
-                        db_execute("UPDATE UnitInstallments SET status='مدفوع متأخر', paid_date=%s, collection_stage='تم السداد / مغلق', call_notes=%s WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), new_log, target_leg_id))
-                        log_event("سداد قسط بعد تدخل القانونية", f"قسط رقم {target_leg_id}")
-                        st.success("تم تسجيل السداد!")
+                    if lb3.button("✅ تم السداد", key=f"{key_prefix}lb3", use_container_width=True):
+                        db_execute("UPDATE UnitInstallments SET status='مدفوع متأخر', paid_date=%s, collection_stage='تم السداد / مغلق' WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), target_leg_id))
                         st.rerun()
-                else:
-                    st.success("لا توجد ملفات متأخرات محولة للشؤون القانونية حالياً.")
 
-            if is_owner:
-                own_esc_df = unpaid_df[unpaid_df['collection_stage'] == 'محول للمالك (لتدخل الإدارة العليا)']
-                if not own_esc_df.empty:
-                    st.error(f"🚨 يوجد ({len(own_esc_df)}) قسط/عميل متعثر تم تصعيده إليك بعد استنفاد محاولات خدمة العملاء والشؤون القانونية!")
-                    for _, o_row in own_esc_df.iterrows():
-                        with st.expander(f"👑 ملف مصعد للمالك: العميل ({o_row['client_name']}) | الوحدة ({o_row['unit_code']}) | المبلغ ({o_row['amount']:,.2f} {o_row['currency']})", expanded=True):
-                            st.write(f"**تاريخ الاستحقاق:** {o_row['due_date']} | **البيان:** {o_row['notes']}")
-                            st.warning(f"**سجل المكالمات والتصعيد الكامل:**\n{o_row['call_notes']}")
-                            oc1, oc2 = st.columns(2)
-                            if oc1.button("✅ تم التسوية والسداد بتدخل المالك", key=f"own_settle_{o_row['id']}", type="primary", use_container_width=True):
-                                db_execute("UPDATE UnitInstallments SET status='مدفوع متأخر', paid_date=%s, collection_stage='تم السداد / مغلق' WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), o_row['id']))
-                                log_event("تسوية قسط بتدخل المالك", f"قسط رقم {o_row['id']}")
-                                st.rerun()
-                            if oc2.button("🔄 إعادة الملف لخدمة العملاء بمهلة جديدة", key=f"own_ret_{o_row['id']}", use_container_width=True):
-                                now_tag = get_egypt_time().strftime("%Y/%m/%d %H:%M")
-                                new_log = f"{o_row['call_notes']} | [قرار المالك {now_tag}: منح مهلة أخيرة وإعادة المتابعة]"
-                                db_execute("UPDATE UnitInstallments SET collection_stage='متابعة خدمة العملاء', call_notes=%s WHERE id=%s", (new_log, o_row['id']))
-                                log_event("منح مهلة من المالك لعميل متأخر", f"قسط رقم {o_row['id']}")
-                                st.rerun()
-
-            if is_accountant or is_sales:
-                with st.expander("💳 تحديث مباشر لحالة دفع قسط (مدفوع في الموعد / مدفوع متأخر / متأخر)"):
-                    up1, up2, up3 = st.columns(3)
-                    inst_opts = inst_df['id'].astype(str) + " - العميل: " + inst_df['client_name'].fillna('') + " | وحدة: " + inst_df['unit_code'].fillna('') + " | مبلغ: " + inst_df['amount'].astype(str) + " " + inst_df['currency'].fillna('') + " (" + inst_df['due_date'].fillna('') + ")"
-                    sel_inst_to_upd = up1.selectbox("اختر القسط لتحديث حالة دفعه:", inst_opts)
-                    new_inst_st = up2.selectbox("هل دفع العميل؟ اختر الحالة:", ["مدفوع في الموعد", "مدفوع متأخر", "مستحق (لم يُدفع)", "متأخر"])
-                    if up3.button("تأكيد حالة الدفع ✅", type="primary"):
+            if can_edit:
+                with st.expander("💳 تأكيد سداد ربع تنفيذ وتحديد تاريخ السداد الفعلي (لتحديث أولوية اختيار الوحدات 🥇)"):
+                    up1, up2, up3, up4 = st.columns([2.5, 1.5, 1.5, 1])
+                    inst_opts = inst_df['id'].astype(str) + " - " + inst_df['client_name'].fillna('') + " | " + inst_df['project_name'].fillna('') + " (" + inst_df['quarter_name'].fillna('') + " - " + inst_df['amount'].astype(str) + " " + inst_df['currency'].fillna('') + ")"
+                    sel_inst_to_upd = up1.selectbox("اختر دفعة الربع:", inst_opts, key=f"{key_prefix}upd_q_sel")
+                    new_inst_st = up2.selectbox("حالة الدفع:", ["مدفوع في الموعد", "مدفوع متأخر", "مستحق (لم يُدفع)", "متأخر"], key=f"{key_prefix}upd_q_st")
+                    actual_paid_dt = up3.date_input("تاريخ السداد الفعلي", key=f"{key_prefix}upd_q_dt")
+                    if up4.button("تأكيد السداد ✅", key=f"{key_prefix}btn_upd_q", type="primary"):
                         inst_id_val = int(sel_inst_to_upd.split(" - ")[0])
-                        paid_dt_val = get_egypt_time().strftime("%Y/%m/%d") if "مدفوع" in new_inst_st else ""
+                        paid_dt_val = actual_paid_dt.strftime("%Y/%m/%d") if "مدفوع" in new_inst_st else ""
                         new_stage = "تم السداد / مغلق" if "مدفوع" in new_inst_st else "متابعة خدمة العملاء"
                         db_execute("UPDATE UnitInstallments SET status=%s, paid_date=%s, collection_stage=%s WHERE id=%s", (new_inst_st, paid_dt_val, new_stage, inst_id_val))
-                        log_event("تحديث دفع قسط عميل", f"تحديث قسط رقم {inst_id_val} إلى {new_inst_st}")
-                        st.success("تم تحديث حالة الدفع وتحديث التقييم الائتماني للعميل!")
+                        log_event("تأكيد سداد ربع تنفيذ", f"دفعة رقم {inst_id_val} - الحالة: {new_inst_st} - تاريخ السداد: {paid_dt_val}")
+                        st.success("تم تسجيل السداد وتحديث ترتيب أولوية المساهم لاختيار الوحدات!")
                         st.rerun()
-                        
+
             if can_delete:
-                with st.expander("🗑️ حذف قسط عميل (التراجع عن قسط مضاف بالخطأ)"):
+                with st.expander("🗑️ حذف مطالبة ربع مضافة بالخطأ"):
                     del_c1, del_c2 = st.columns([3, 1])
-                    all_inst_opts = inst_df['id'].astype(str) + " - العميل: " + inst_df['client_name'].fillna('') + " | وحدة: " + inst_df['unit_code'].fillna('') + " | مبلغ: " + inst_df['amount'].astype(str) + " " + inst_df['currency'].fillna('')
-                    sel_inst_del = del_c1.selectbox("اختر القسط المراد حذفه:", all_inst_opts, key="del_inst_sel")
-                    if del_c2.button("حذف القسط 🗑️", key="btn_del_inst"):
+                    all_inst_opts = inst_df['id'].astype(str) + " - المساهم: " + inst_df['client_name'].fillna('') + " | " + inst_df['quarter_name'].fillna('') + " (" + inst_df['amount'].astype(str) + ")"
+                    sel_inst_del = del_c1.selectbox("اختر المطالبة المراد حذفها:", all_inst_opts, key=f"{key_prefix}del_inst_sel")
+                    if del_c2.button("حذف المطالبة 🗑️", key=f"{key_prefix}btn_del_inst"):
                         inst_id_del = int(sel_inst_del.split(" - ")[0])
                         db_execute("DELETE FROM UnitInstallments WHERE id=%s", (inst_id_del,))
-                        log_event("حذف قسط عميل", f"حذف القسط رقم {inst_id_del}")
-                        st.success("تم مسح القسط بنجاح!")
+                        st.success("تم الحذف بنجاح!")
                         st.rerun()
-                        
-            disp_inst = inst_df[['unit_code', 'client_name', 'amount', 'currency', 'due_date', 'paid_date', 'status', 'collection_stage', 'call_notes', 'notes']].copy()
-            disp_inst.columns = ['كود الوحدة', 'اسم العميل', 'قيمة القسط', 'العملة', 'تاريخ الاستحقاق', 'تاريخ السداد الفعلي', 'حالة الدفع', 'مرحلة المتابعة/التصعيد', 'سجل المكالمات', 'بيان القسط']
+
+            disp_inst = inst_df[['project_name', 'client_name', 'phase_name', 'quarter_name', 'amount', 'currency', 'due_date', 'paid_date', 'status', 'collection_stage', 'notes']].copy()
+            disp_inst.columns = ['الاتحاد', 'اسم المالك المساهم', 'المرحلة', 'الربع (1-4)', 'المبلغ المطلوب', 'العملة', 'تاريخ الاستحقاق', 'تاريخ السداد الفعلي', 'حالة الدفع', 'مرحلة المتابعة', 'ملاحظات']
             st.dataframe(disp_inst, use_container_width=True, hide_index=True)
         else:
-            st.info("لا توجد أقساط مجدولة للعملاء بعد.")
+            st.info("لا توجد مطالبات أرباع تنفيذ مسجلة بعد.")
 
+    # =========================================================
+    # التبويب 3: استثناء المالك لتقسيم ربع التنفيذ (على دفعتين أو 3)
+    # =========================================================
     with crm_tabs[2]:
-        render_unit_resale_module(mode=mode)
+        render_quarter_split_exception_module(mode=mode, key_prefix=key_prefix)
 
+    # =========================================================
+    # التبويب 4: سجل الملاك المساهمين وحصص الأرض (%)
+    # =========================================================
     with crm_tabs[3]:
-        st.subheader("📇 سجل بيانات العملاء")
-        if is_sales:
-            with st.form("add_client_form"):
-                c1, c2 = st.columns(2)
-                cl_name = c1.text_input("اسم العميل رباعي *")
-                cl_phone = c2.text_input("رقم الهاتف / واتساب *")
-                
-                c3, c4 = st.columns(2)
-                cl_nid = c3.text_input("الرقم القومي")
-                cl_addr = c4.text_input("العنوان بالتفصيل")
-                cl_notes = st.text_input("ملاحظات عن العميل")
-                
-                if st.form_submit_button("حفظ بيانات العميل 💾", type="primary"):
-                    if cl_name.strip() and cl_phone.strip():
-                        try:
-                            existing = db_fetchone("SELECT id FROM Clients WHERE name=%s", (cl_name.strip(),))
-                            if existing:
-                                db_execute(
-                                    "UPDATE Clients SET phone=%s, national_id=%s, address=%s, notes=%s WHERE id=%s",
-                                    (cl_phone.strip(), cl_nid.strip(), cl_addr.strip(), cl_notes.strip(), existing[0])
-                                )
-                            else:
-                                db_execute(
-                                    "INSERT INTO Clients (name, phone, national_id, address, notes) VALUES (%s, %s, %s, %s, %s)",
-                                    (cl_name.strip(), cl_phone.strip(), cl_nid.strip(), cl_addr.strip(), cl_notes.strip())
-                                )
-                            log_event("إضافة/تحديث عميل", f"العميل: {cl_name.strip()} - هاتف: {cl_phone.strip()}")
-                            st.success(f"تم حفظ بيانات العميل ({cl_name}) بنجاح!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"حدث خطأ: {e}")
-                    else:
-                        st.error("يرجى إدخال اسم العميل ورقم الهاتف.")
-                        
-        if not clients_df.empty:
-            if can_delete:
-                with st.expander("🗑️ حذف عميل من السجل (مع إمكانية مسح وحداته وأقساطه)"):
-                    dc1, dc2, dc3 = st.columns([2, 2, 1])
-                    cl_del_opts = clients_df['id'].astype(str) + " - " + clients_df['name'].fillna('')
-                    sel_cl_del = dc1.selectbox("اختر العميل المراد مسحه:", cl_del_opts, key="sel_cl_del")
-                    cascade_del = dc2.checkbox("مسح جميع وحداته وأقساطه المرتبطة به أيضاً", value=True)
-                    if dc3.button("حذف العميل 🗑️", key="btn_del_cl"):
-                        cl_id_del = int(sel_cl_del.split(" - ")[0])
-                        cl_name_del = sel_cl_del.split(" - ")[1].strip()
-                        db_execute("DELETE FROM Clients WHERE id=%s", (cl_id_del,))
-                        if cascade_del:
-                            db_execute("DELETE FROM RealEstateUnits WHERE client_name=%s", (cl_name_del,))
-                            db_execute("DELETE FROM UnitInstallments WHERE client_name=%s", (cl_name_del,))
-                            db_execute("DELETE FROM Cheques WHERE client_name=%s", (cl_name_del,))
-                        log_event("حذف عميل", f"تم مسح العميل: {cl_name_del}")
-                        st.success(f"تم مسح العميل ({cl_name_del}) بنجاح!")
-                        st.rerun()
-                        
-            disp_cl = clients_df.drop(columns=['id'])
-            disp_cl.columns = ['اسم العميل', 'رقم الهاتف', 'الرقم القومي', 'العنوان', 'ملاحظات']
-            st.dataframe(disp_cl, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا يوجد عملاء مسجلين بعد.")
-
-    with crm_tabs[4]:
-        st.subheader("🏢 تسكين الوحدات وربطها بالعملاء")
-        if is_sales:
-            with st.form("add_unit_crm"):
+        st.subheader("🤝 سجل الملاك المساهمين وحصص المشاركة في الأرض (%)")
+        if can_edit:
+            with st.form(f"{key_prefix}add_shareholder_form"):
                 c1, c2, c3 = st.columns(3)
-                u_proj = c1.selectbox("المشروع", [f"اتحاد {i}" for i in range(1, 46)])
-                u_code = c2.text_input("رقم / كود الوحدة (مثال: شقة 301 - اتحاد 5)")
-                u_status = c3.selectbox("حالة الوحدة", ["متاحة", "مباعة", "محجوزة"])
+                sh_name = c1.text_input("اسم المالك المساهم رباعي *")
+                sh_phone = c2.text_input("رقم الهاتف / واتساب *")
+                sh_proj = c3.selectbox("المشروع المشترك فيه (الاتحاد) *", [f"اتحاد {i}" for i in range(1, 46)], key=f"{key_prefix}sh_proj_in")
                 
-                c4, c5, c6 = st.columns([2, 1.5, 1])
-                if client_names_list:
-                    u_client = c4.selectbox("اختر العميل المشتري (من سجل العملاء)", ["بدون عميل (متاحة)"] + client_names_list)
-                else:
-                    u_client = c4.text_input("اسم العميل (يفضل إضافته في سجل العملاء أولاً)")
-                    
-                u_price = c5.number_input("إجمالي سعر الوحدة", min_value=0.0, step=5000.0)
-                u_curr = c6.selectbox("العملة", CURRENCY_OPTIONS, key="unit_curr")
-                u_notes = st.text_input("ملاحظات التعاقد")
+                c4, c5, c6 = st.columns(3)
+                sh_pct = c4.number_input("نسبة مشاركته في الأرض (%) *", min_value=0.1, max_value=100.0, value=10.0, step=0.5)
+                sh_land_amt = c5.number_input("قيمة حصته المالية في الأرض", min_value=0.0, step=10000.0)
+                sh_curr = c6.selectbox("العملة", CURRENCY_OPTIONS, key=f"{key_prefix}sh_curr_in")
                 
-                if st.form_submit_button("تسجيل / تحديث الوحدة 🏢", type="primary"):
-                    if u_code.strip():
-                        final_cl = "" if u_client == "بدون عميل (متاحة)" else u_client
-                        existing_unit = db_fetchone("SELECT id FROM RealEstateUnits WHERE unit_code=%s", (u_code.strip(),))
-                        if existing_unit:
-                            db_execute(
-                                "UPDATE RealEstateUnits SET project_name=%s, status=%s, client_name=%s, total_price=%s, currency=%s, notes=%s WHERE id=%s",
-                                (u_proj, u_status, final_cl, u_price, u_curr, u_notes, existing_unit[0])
-                            )
+                c7, c8, c9 = st.columns(3)
+                sh_nid = c7.text_input("الرقم القومي")
+                sh_unit = c8.text_input("الوحدة المخصصة (اختياري - يحدد حسب الأولوية)", value="تحدد حسب أولوية السداد")
+                sh_notes = c9.text_input("ملاحظات المساهمة")
+                
+                if st.form_submit_button("حفظ بيانات المالك المساهم وحصته 💾", type="primary"):
+                    if sh_name.strip() and sh_phone.strip():
+                        existing_sh = db_fetchone("SELECT id FROM Shareholders WHERE name=%s AND project_name=%s", (sh_name.strip(), sh_proj))
+                        if existing_sh:
+                            db_execute("""
+                                UPDATE Shareholders 
+                                SET phone=%s, national_id=%s, land_share_pct=%s, land_share_amount=%s, currency=%s, assigned_unit=%s, notes=%s
+                                WHERE id=%s
+                            """, (sh_phone.strip(), sh_nid.strip(), sh_pct, sh_land_amt, sh_curr, sh_unit.strip(), sh_notes.strip(), existing_sh[0]))
                         else:
-                            db_execute(
-                                "INSERT INTO RealEstateUnits (project_name, unit_code, status, client_name, total_price, currency, notes) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                                (u_proj, u_code.strip(), u_status, final_cl, u_price, u_curr, u_notes)
-                            )
-                        log_event("تسجيل/تحديث وحدة عقارية", f"وحدة: {u_code} - مشروع: {u_proj} - عميل: {final_cl} - السعر: {u_price} {u_curr}")
-                        st.success("تم حفظ بيانات الوحدة بنجاح!")
+                            db_execute("""
+                                INSERT INTO Shareholders (name, phone, national_id, address, project_name, land_share_pct, land_share_amount, currency, assigned_unit, notes)
+                                VALUES (%s, %s, %s, '', %s, %s, %s, %s, %s, %s)
+                            """, (sh_name.strip(), sh_phone.strip(), sh_nid.strip(), sh_proj, sh_pct, sh_land_amt, sh_curr, sh_unit.strip(), sh_notes.strip()))
+                        
+                        # حفظ في جدول Clients أيضاً للتوافق
+                        try:
+                            db_execute("INSERT INTO Clients (name, phone, national_id, address, notes) VALUES (%s, %s, %s, %s, %s)", (sh_name.strip(), sh_phone.strip(), sh_nid.strip(), sh_proj, f"مساهم بنسبة {sh_pct}%"))
+                        except:
+                            pass
+
+                        log_event("تسجيل مالك مساهم", f"المساهم: {sh_name} - {sh_proj} - نسبة الأرض: {sh_pct}% - قيمة: {sh_land_amt} {sh_curr}")
+                        st.success(f"تم حفظ بيانات المالك المساهم ({sh_name}) في ({sh_proj}) بنسبة ({sh_pct}%) بنجاح!")
                         st.rerun()
                     else:
-                        st.error("يرجى كتابة كود الوحدة.")
-                        
-        if not units_df.empty:
+                        st.error("يرجى إدخال اسم المالك المساهم ورقم الهاتف.")
+
+        if not sh_df.empty:
+            st.markdown("#### 📊 ملخص إجمالي نسب الملكية المسجلة في كل اتحاد")
+            proj_pct_sum = sh_df.groupby('project_name').agg(
+                عدد_المساهمين=('id', 'count'),
+                إجمالي_النسب_المسجلة=('land_share_pct', 'sum'),
+                إجمالي_حصص_الأرض=('land_share_amount', 'sum')
+            ).reset_index()
+            proj_pct_sum['النسبة المتبقية غير الموزعة %'] = (100.0 - proj_pct_sum['إجمالي_النسب_المسجلة']).round(2)
+            proj_pct_sum.columns = ['الاتحاد', 'عدد الملاك المساهمين', 'إجمالي النسب المسجلة %', 'إجمالي قيمة حصص الأرض', 'النسبة المتبقية %']
+            st.dataframe(proj_pct_sum, use_container_width=True, hide_index=True)
+
             if can_delete:
-                with st.expander("🗑️ حذف وحدة عقارية (التراجع عن تسجيل وحدة)"):
-                    du1, du2 = st.columns([3, 1])
-                    u_del_opts = units_df['id'].astype(str) + " - " + units_df['unit_code'].fillna('') + " (" + units_df['project_name'].fillna('') + " | العميل: " + units_df['client_name'].fillna('') + ")"
-                    sel_u_del = du1.selectbox("اختر الوحدة المراد مسحها:", u_del_opts, key="sel_u_del")
-                    if du2.button("حذف الوحدة 🗑️", key="btn_del_u"):
-                        u_id_del = int(sel_u_del.split(" - ")[0])
-                        db_execute("DELETE FROM RealEstateUnits WHERE id=%s", (u_id_del,))
-                        log_event("حذف وحدة عقارية", f"تم مسح الوحدة رقم {u_id_del}")
-                        st.success("تم مسح بيانات الوحدة بنجاح!")
+                with st.expander("🗑️ حذف مالك مساهم من السجل"):
+                    dc1, dc2, dc3 = st.columns([2, 2, 1])
+                    sh_del_opts = sh_df['id'].astype(str) + " - " + sh_df['name'].fillna('') + " (" + sh_df['project_name'].fillna('') + " - " + sh_df['land_share_pct'].astype(str) + "%)"
+                    sel_sh_del = dc1.selectbox("اختر المساهم المراد حذفه:", sh_del_opts, key=f"{key_prefix}sel_sh_del")
+                    cascade_sh = dc2.checkbox("مسح مطالبات الأرباع المرتبطة به أيضاً", value=True, key=f"{key_prefix}casc_sh")
+                    if dc3.button("حذف المساهم 🗑️", key=f"{key_prefix}btn_del_sh"):
+                        sh_id_del = int(sel_sh_del.split(" - ")[0])
+                        sh_row_del = sh_df[sh_df['id'] == sh_id_del].iloc[0]
+                        db_execute("DELETE FROM Shareholders WHERE id=%s", (sh_id_del,))
+                        if cascade_sh:
+                            db_execute("DELETE FROM UnitInstallments WHERE client_name=%s AND project_name=%s", (sh_row_del['name'], sh_row_del['project_name']))
+                        log_event("حذف مالك مساهم", f"تم مسح المساهم: {sh_row_del['name']}")
+                        st.success("تم الحذف بنجاح!")
                         st.rerun()
-                        
-            disp_u = units_df.drop(columns=['id'])
-            disp_u.columns = ['المشروع', 'كود الوحدة', 'الحالة', 'اسم العميل', 'إجمالي السعر', 'العملة', 'ملاحظات']
-            st.dataframe(disp_u, use_container_width=True, hide_index=True)
+
+            disp_sh = sh_df[['project_name', 'name', 'phone', 'land_share_pct', 'land_share_amount', 'currency', 'assigned_unit', 'national_id', 'notes']].copy()
+            disp_sh.columns = ['الاتحاد', 'اسم المالك المساهم', 'رقم الهاتف', 'نسبة المشاركة في الأرض %', 'الحصة المالية للأرض', 'العملة', 'الوحدة المخصصة', 'الرقم القومي', 'ملاحظات']
+            st.dataframe(disp_sh, use_container_width=True, hide_index=True)
         else:
-            st.info("لا توجد وحدات مسجلة.")
+            st.info("لا يوجد ملاك مساهمين مسجلين بعد.")
 
 # ==========================================
-# 7. الشاشة المشتركة للموظفين (مع ضغط فائق لصور البصمة لتوفير المساحة)
+# 7. الشاشة المشتركة للموظفين (البصمة والتقارير والرصيد السنوي)
 # ==========================================
 def render_employee_dashboard(emp_id, balance):
     stats = get_employee_stats(emp_id)
