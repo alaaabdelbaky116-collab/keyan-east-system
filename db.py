@@ -6,6 +6,7 @@ import os
 import psycopg2
 import pytz
 import math
+import io
 
 # ==========================================
 # 1. الثوابت والقوائم الأساسية للنظام
@@ -16,6 +17,14 @@ OFFICIAL_OUT = '18:00'
 GRACE_PERIOD_MINS = 60
 REQUIRED_HOURS = 7
 DEFAULT_ANNUAL_BALANCE = 21
+
+CURRENCY_OPTIONS = [
+    "ج.م (EGP)", 
+    "دولار (USD)", 
+    "ريال سعودي (SAR)", 
+    "درهم إماراتي (AED)", 
+    "يورو (EUR)"
+]
 
 COMPANY_DEPARTMENTS = [
     "اتش ار (HR)", "مبيعات وخدمة عملاء", "عقود قانونية", "تراخيص", "حسابات", 
@@ -105,10 +114,10 @@ def log_event(action_type, details=""):
         pass
 
 # ==========================================
-# 3. تهيئة وتحديث الجداول تلقائياً (Caching v5)
+# 3. تهيئة وتحديث الجداول تلقائياً (شامل العملة)
 # ==========================================
 @st.cache_resource
-def setup_database_v5():
+def setup_database_v6():
     try:
         conn = get_db_connection()
         conn.autocommit = True
@@ -121,16 +130,16 @@ def setup_database_v5():
         cur.execute('''CREATE TABLE IF NOT EXISTS MonthlyStats (emp_id TEXT, month TEXT, delay_mins REAL, absent_dates TEXT, overtime_hours REAL DEFAULT 0, PRIMARY KEY(emp_id, month))''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Locations (id SERIAL PRIMARY KEY, name TEXT, lat REAL, lon REAL, radius REAL)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS WebAttendance (id SERIAL PRIMARY KEY, emp_id TEXT, date TEXT, time TEXT, action TEXT, distance REAL, location_name TEXT, photo TEXT, project_name TEXT, daily_report TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS ProjectFinancials (id SERIAL PRIMARY KEY, project_name TEXT, installment_type TEXT, amount REAL, due_date TEXT, status TEXT, category TEXT DEFAULT 'قسط جهاز', shareholder_name TEXT DEFAULT 'الشركة', share_percentage REAL DEFAULT 100.0, notes TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS ProjectFinancials (id SERIAL PRIMARY KEY, project_name TEXT, installment_type TEXT, amount REAL, currency TEXT DEFAULT 'ج.م (EGP)', due_date TEXT, status TEXT, category TEXT DEFAULT 'قسط جهاز', shareholder_name TEXT DEFAULT 'الشركة', share_percentage REAL DEFAULT 100.0, notes TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectLicenses (id SERIAL PRIMARY KEY, project_name TEXT, license_name TEXT, due_date TEXT, status TEXT, file_data TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS ProjectDrawings (id SERIAL PRIMARY KEY, project_name TEXT, drawing_name TEXT, due_date TEXT, status TEXT, file_data TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Tasks (id SERIAL PRIMARY KEY, emp_id TEXT, assigner TEXT, project_name TEXT, task_desc TEXT, assign_date TEXT, due_date TEXT, status TEXT, employee_reply TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Extracts (id SERIAL PRIMARY KEY, project_name TEXT, extract_name TEXT, amount REAL, date TEXT, created_by TEXT, status TEXT, file_data TEXT, impediment_notes TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS Clients (id SERIAL PRIMARY KEY, name TEXT, phone TEXT, national_id TEXT, address TEXT, notes TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS RealEstateUnits (id SERIAL PRIMARY KEY, project_name TEXT, unit_code TEXT, status TEXT, client_name TEXT, total_price REAL, notes TEXT, contract_file TEXT)''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS UnitInstallments (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, amount REAL, due_date TEXT, paid_date TEXT, status TEXT, notes TEXT, collection_stage TEXT DEFAULT 'متابعة خدمة العملاء', call_notes TEXT DEFAULT '')''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS UnitResaleRequests (id SERIAL PRIMARY KEY, unit_code TEXT, project_name TEXT, old_client_name TEXT, old_price REAL, new_evaluated_price REAL, reason TEXT, requested_by TEXT, request_date TEXT, status TEXT DEFAULT 'بانتظار موافقة المالك', owner_notes TEXT DEFAULT '')''')
-        cur.execute('''CREATE TABLE IF NOT EXISTS Cheques (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, cheque_number TEXT, amount REAL, due_date TEXT, file_data TEXT, status TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS RealEstateUnits (id SERIAL PRIMARY KEY, project_name TEXT, unit_code TEXT, status TEXT, client_name TEXT, total_price REAL, currency TEXT DEFAULT 'ج.م (EGP)', notes TEXT, contract_file TEXT)''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS UnitInstallments (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, amount REAL, currency TEXT DEFAULT 'ج.م (EGP)', due_date TEXT, paid_date TEXT, status TEXT, notes TEXT, collection_stage TEXT DEFAULT 'متابعة خدمة العملاء', call_notes TEXT DEFAULT '')''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS UnitResaleRequests (id SERIAL PRIMARY KEY, unit_code TEXT, project_name TEXT, old_client_name TEXT, old_price REAL, new_evaluated_price REAL, currency TEXT DEFAULT 'ج.م (EGP)', reason TEXT, requested_by TEXT, request_date TEXT, status TEXT DEFAULT 'بانتظار موافقة المالك', owner_notes TEXT DEFAULT '')''')
+        cur.execute('''CREATE TABLE IF NOT EXISTS Cheques (id SERIAL PRIMARY KEY, unit_code TEXT, client_name TEXT, cheque_number TEXT, amount REAL, currency TEXT DEFAULT 'ج.م (EGP)', due_date TEXT, file_data TEXT, status TEXT)''')
         cur.execute('''CREATE TABLE IF NOT EXISTS AuditLogs (id SERIAL PRIMARY KEY, log_time TEXT, username TEXT, role TEXT, action_type TEXT, details TEXT)''')
         
         alter_queries = [
@@ -145,14 +154,19 @@ def setup_database_v5():
             "ALTER TABLE RealEstateUnits ADD COLUMN notes TEXT",
             "ALTER TABLE RealEstateUnits ADD COLUMN total_price REAL DEFAULT 0.0",
             "ALTER TABLE RealEstateUnits ADD COLUMN client_name TEXT",
+            "ALTER TABLE RealEstateUnits ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'",
             "ALTER TABLE ProjectFinancials ADD COLUMN category TEXT DEFAULT 'قسط جهاز'",
             "ALTER TABLE ProjectFinancials ADD COLUMN shareholder_name TEXT DEFAULT 'الشركة'",
             "ALTER TABLE ProjectFinancials ADD COLUMN share_percentage REAL DEFAULT 100.0",
             "ALTER TABLE ProjectFinancials ADD COLUMN notes TEXT",
+            "ALTER TABLE ProjectFinancials ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'",
             "ALTER TABLE UnitInstallments ADD COLUMN paid_date TEXT",
             "ALTER TABLE UnitInstallments ADD COLUMN notes TEXT",
             "ALTER TABLE UnitInstallments ADD COLUMN collection_stage TEXT DEFAULT 'متابعة خدمة العملاء'",
             "ALTER TABLE UnitInstallments ADD COLUMN call_notes TEXT DEFAULT ''",
+            "ALTER TABLE UnitInstallments ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'",
+            "ALTER TABLE UnitResaleRequests ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'",
+            "ALTER TABLE Cheques ADD COLUMN currency TEXT DEFAULT 'ج.م (EGP)'",
             "ALTER TABLE Clients ADD COLUMN name TEXT",
             "ALTER TABLE Clients ADD COLUMN phone TEXT",
             "ALTER TABLE Clients ADD COLUMN national_id TEXT",
@@ -178,6 +192,10 @@ def setup_database_v5():
         return True
     except Exception as e:
         return False
+
+# دعم التوافق مع أي إصدار في app.py
+setup_database_v4 = setup_database_v6
+setup_database_v5 = setup_database_v6
 
 def authenticate(username, password):
     return db_fetchone("SELECT role, secondary_role, emp_id FROM Users WHERE username=%s AND password=%s", (username, password))
