@@ -424,9 +424,43 @@ def generate_full_backup_safe():
 
     try:
         buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+        # استخدام xlsxwriter بدلاً من openpyxl لدعم اللوجو والتنسيقات المتقدمة
+        with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+            workbook = writer.book
+            
+            # تجهيز التنسيقات (الألوان والخطوط)
+            title_format = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'font_size': 18, 'font_color': '#0b172a'})
+            sub_format = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'font_size': 14, 'bg_color': '#0b172a', 'font_color': '#D4AF37'})
+            header_format = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#f2f2f2', 'border': 1})
+            cell_format = workbook.add_format({'align': 'center', 'valign': 'vcenter'})
+
             for s_name, df in dfs.items():
-                df.to_excel(writer, sheet_name=s_name[:31], index=False)
+                sheet_name = s_name[:31]
+                # كتابة البيانات بداية من الصف الرابع لترك مساحة للترويسة
+                df.to_excel(writer, sheet_name=sheet_name, startrow=4, index=False)
+                worksheet = writer.sheets[sheet_name]
+                
+                # جعل الشيت من اليمين لليسار (عربي)
+                worksheet.right_to_left()
+
+                max_col = max(len(df.columns) - 1, 5)
+                
+                # كتابة اسم الشركة واسم التقرير ودمج الخلايا
+                worksheet.merge_range(0, 1, 1, max_col, 'كيان الشرقية للمقاولات والاستثمار العقاري', title_format)
+                worksheet.merge_range(2, 0, 2, max_col, f'سجل بيانات النظام - {sheet_name}', sub_format)
+
+                # إضافة اللوجو في أول خلية إذا كان موجوداً
+                try:
+                    if os.path.exists(LOGO_FILE):
+                        worksheet.insert_image('A1', LOGO_FILE, {'x_scale': 0.12, 'y_scale': 0.12, 'positioning': 1})
+                except Exception:
+                    pass
+
+                # تنسيق الأعمدة وعرضها
+                for col_num, value in enumerate(df.columns.values):
+                    worksheet.write(4, col_num, value, header_format)
+                    worksheet.set_column(col_num, col_num, 20, cell_format)
+
         buf.seek(0)
         return buf.getvalue(), f"Keyan_Backup_{get_egypt_time().strftime('%Y%m%d_%H%M')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     except Exception:
