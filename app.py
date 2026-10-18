@@ -69,20 +69,24 @@ else:
     render_sidebar(role_title)
     render_smart_alerts()
 
-    # ==========================================
+# ==========================================
     # 1. لوحة المالك (Owner) أو مسؤول النظام (Admin)
     # ==========================================
     if role in ['owner', 'admin']:
         st.title(f"👑 لوحة القيادة العليا ({role_title})")
+        
+        # تغيير اسم تبويب الأمان بناءً على الصلاحية (لإخفاء كلمة Logs من المالك)
+        sec_tab_name = "⚙️ الأمان والـ Logs" if role == 'admin' else "⚙️ الأمان والمساحة"
+        
         nav_tabs = st.tabs([
             "📊 المؤشرات والحاضرين والغائبين",
             "📋 إسناد مهام لأي موظف بالشركة",
             "🤝 متابعة اتحاد الملاك واعتماد الاستثناءات",
-            "💰 أقساط الجهاز والمالية",
+            "🏛️ متابعة أقساط الجهاز (اطلاع فقط)",
             "📄 رادار المستخلصات الهندسية",
             "👥 تقارير الحضور والـ HR",
             "🏠 لوحتي الشخصية (البصمة)",
-            "⚙️ الأمان والـ Logs"
+            sec_tab_name
         ])
         
         with nav_tabs[0]:
@@ -90,10 +94,10 @@ else:
         with nav_tabs[1]:
             render_task_delegation("الكل")
         with nav_tabs[2]:
-            # المالك يطلع ويعتمد الاستثناءات فقط، ولا يضيف عملاء أو أقساط (خدمة العملاء فقط تضيف)
             render_clients_and_crm_module(mode="owner", key_prefix="own_crm_")
         with nav_tabs[3]:
-            render_financials_module(can_edit=True)
+            # تمرير False لضمان إغلاق أي نماذج إضافة أو تعديل في الحسابات عن المالك
+            render_financials_module(can_edit=False) 
         with nav_tabs[4]:
             render_manage_extracts()
         with nav_tabs[5]:
@@ -109,14 +113,18 @@ else:
         with nav_tabs[6]:
             render_employee_dashboard(emp_id, balance)
         with nav_tabs[7]:
-            render_security_and_backup_center()
-            st.divider()
-            st.subheader("🕵️ سجل مراقبة العمليات (Audit Logs)")
-            conn = get_db_connection()
-            logs_df = pd.read_sql_query("SELECT log_time AS \"التوقيت\", username AS \"المستخدم\", role AS \"الصلاحية\", action_type AS \"العملية\", details AS \"التفاصيل\" FROM AuditLogs ORDER BY id DESC LIMIT 300", conn)
-            conn.close()
-            st.dataframe(logs_df, use_container_width=True, hide_index=True)
-
+            render_security_and_backup_center(key_prefix="tab_sec_")
+            
+            # حجب سجلات النظام (Logs) تماماً عن المالك، وعرضها لمسؤول النظام (Admin) فقط
+            if role == 'admin':
+                st.divider()
+                st.subheader("🕵️ سجل مراقبة العمليات (Audit Logs)")
+                conn = get_db_connection()
+                logs_df = pd.read_sql_query("SELECT log_time AS \"التوقيت\", username AS \"المستخدم\", role AS \"الصلاحية\", action_type AS \"العملية\", details AS \"التفاصيل\" FROM AuditLogs ORDER BY id DESC LIMIT 300", conn)
+                conn.close()
+                st.dataframe(logs_df, use_container_width=True, hide_index=True)
+            else:
+                st.info("ℹ️ سجلات مراقبة النظام والعمليات (Audit Logs) محجوبة، ومتاحة لمسؤول النظام (Admin) فقط.")
     # ==========================================
     # 2. لوحة خدمة العملاء والمبيعات (الجهة الوحيدة المخولة بإضافة الملاك والأقساط)
     # ==========================================
