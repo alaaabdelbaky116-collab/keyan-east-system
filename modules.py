@@ -424,11 +424,8 @@ def generate_full_backup_safe():
 
     try:
         buf = io.BytesIO()
-        # استخدام xlsxwriter بدلاً من openpyxl لدعم اللوجو والتنسيقات المتقدمة
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
             workbook = writer.book
-            
-            # تجهيز التنسيقات (الألوان والخطوط)
             title_format = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'font_size': 18, 'font_color': '#0b172a'})
             sub_format = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'font_size': 14, 'bg_color': '#0b172a', 'font_color': '#D4AF37'})
             header_format = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#f2f2f2', 'border': 1})
@@ -436,27 +433,20 @@ def generate_full_backup_safe():
 
             for s_name, df in dfs.items():
                 sheet_name = s_name[:31]
-                # كتابة البيانات بداية من الصف الرابع لترك مساحة للترويسة
                 df.to_excel(writer, sheet_name=sheet_name, startrow=4, index=False)
                 worksheet = writer.sheets[sheet_name]
-                
-                # جعل الشيت من اليمين لليسار (عربي)
                 worksheet.right_to_left()
 
                 max_col = max(len(df.columns) - 1, 5)
-                
-                # كتابة اسم الشركة واسم التقرير ودمج الخلايا
                 worksheet.merge_range(0, 1, 1, max_col, 'كيان الشرقية للمقاولات والاستثمار العقاري', title_format)
                 worksheet.merge_range(2, 0, 2, max_col, f'سجل بيانات النظام - {sheet_name}', sub_format)
 
-                # إضافة اللوجو في أول خلية إذا كان موجوداً
                 try:
                     if os.path.exists(LOGO_FILE):
                         worksheet.insert_image('A1', LOGO_FILE, {'x_scale': 0.12, 'y_scale': 0.12, 'positioning': 1})
                 except Exception:
                     pass
 
-                # تنسيق الأعمدة وعرضها
                 for col_num, value in enumerate(df.columns.values):
                     worksheet.write(4, col_num, value, header_format)
                     worksheet.set_column(col_num, col_num, 20, cell_format)
@@ -516,13 +506,12 @@ def set_dynamic_background():
         )
 
 def render_security_and_backup_center(key_prefix="sec_main_"):
-    """تمت إضافة key_prefix لمنع أي تكرار للأزرار نهائياً"""
     active_role = st.session_state.get('current_role') or st.session_state.get('role')
     if active_role not in ['owner', 'admin']:
         st.warning("🔒 هذه اللوحة مخصصة للمالك (Owner) ومسؤول النظام (Admin) فقط.")
         return
 
-    st.subheader("🛡️ مركز الأمان والنسخ الاحتياطي وتنظيف مساحة السيرفر (للمالك والأدمن فقط)")
+    st.subheader("🛡️ مركز الأمان والنسخ الاحتياطي وتنظيف مساحة السيرفر")
     used_mb, used_pct, tables_df = get_database_size_info_safe()
     remaining_mb = max(0.0, SUPABASE_FREE_LIMIT_MB - used_mb)
     
@@ -618,14 +607,11 @@ def render_sidebar(role_title):
 
         active_role = st.session_state.get('current_role') or st.session_state.get('role')
         if active_role in ['owner', 'admin']:
-            active_role = st.session_state.get('current_role') or st.session_state.get('role')
-        if active_role in ['owner', 'admin']:
             with st.expander("🛡️ المساحة والنسخ الاحتياطي"):
                 used_mb, used_pct, _ = get_database_size_info_safe()
                 st.caption(f"💾 مساحة Supabase: **{used_mb} MB** / 500 MB ({used_pct}%)")
                 st.progress(min(1.0, used_pct / 100.0))
                 
-                # إظهار زر المسح للأدمن فقط
                 if active_role == 'admin':
                     if st.button("🗓️ مسح صور الشهور السابقة", key="sb_monthly_cln", type="primary", use_container_width=True):
                         del_cnt, cutoff_dt = cleanup_previous_months_photos(is_auto=False)
@@ -719,7 +705,7 @@ def render_smart_alerts():
                     st.warning(alert)
 
 # ==========================================
-# 2. إدارة الإجازات السنوية (للـ HR) وإعفاء التقارير (لرؤساء الأقسام)
+# 2. إدارة الإجازات السنوية وإعفاء التقارير 
 # ==========================================
 def render_leave_balance_management():
     st.header("🌴 إدارة أرصدة الإجازات السنوية للموظفين (طوال العام)")
@@ -801,7 +787,7 @@ def render_department_exemption_manager(department_filter="الكل"):
         st.info("لا يوجد موظفين مسجلين في هذا القسم حالياً.")
 
 # ==========================================
-# 3. لوحة القيادة وكشف أسماء الحاضرين والغائبين وإسناد المهام
+# 3. لوحة القيادة وكشف أسماء الحاضرين الغائبين
 # ==========================================
 def render_present_and_absent_employees_widget(key_prefix="dash_"):
     st.subheader("👥 كشف أسماء الموظفين الحاضرين والغائبين")
@@ -876,7 +862,6 @@ def render_present_and_absent_employees_widget(key_prefix="dash_"):
 
 def render_company_dashboard():
     st.header("📊 المؤشرات الحيوية والتفاعلية للشركة")
-    
     conn = get_db_connection()
     today = get_egypt_time().strftime("%Y/%m/%d")
 
@@ -989,7 +974,6 @@ def render_attendance_report(department_filter=None):
         st.dataframe(final_df, use_container_width=True, hide_index=True, column_config={"صورة الإثبات": st.column_config.ImageColumn("صورة الإثبات")})
         
         csv_df = final_df.drop(columns=['صورة الإثبات'])
-        
         total_mins = 0
         for val in csv_df['ساعات العمل']:
             if "⚠️" not in val and ":" in val:
@@ -1002,41 +986,18 @@ def render_attendance_report(department_filter=None):
         total_str = f"{total_mins // 60}:{(total_mins % 60):02d} ساعة"
         
         summary_row = pd.DataFrame([{
-            'التاريخ': 'إجمالي الساعات',
-            'اليوم': '',
-            'اسم الموظف': '',
-            'القسم الأساسي': '',
-            'الحضور': '',
-            'الانصراف': '',
-            'ساعات العمل': total_str,
-            'موقع البصمة': '',
-            'المشاريع': '',
-            'التقارير اليومية': ''
+            'التاريخ': 'إجمالي الساعات', 'اليوم': '', 'اسم الموظف': '', 'القسم الأساسي': '',
+            'الحضور': '', 'الانصراف': '', 'ساعات العمل': total_str, 'موقع البصمة': '',
+            'المشاريع': '', 'التقارير اليومية': ''
         }])
         
         csv_df_with_total = pd.concat([csv_df, summary_row], ignore_index=True)
         
         col_down1, col_down2 = st.columns(2)
         csv_data = csv_df_with_total.to_csv(index=False).encode('utf-8-sig')
-        
-        col_down1.download_button(
-            "📥 تحميل كـ شيت (Excel/CSV)",
-            data=csv_data,
-            file_name=f"Attendance_{get_egypt_time().strftime('%Y%m%d')}.csv",
-            mime='text/csv',
-            use_container_width=True
-        )
-        
+        col_down1.download_button("📥 تحميل كـ شيت (Excel/CSV)", data=csv_data, file_name=f"Attendance_{get_egypt_time().strftime('%Y%m%d')}.csv", mime='text/csv', use_container_width=True)
         html_report = generate_html_report("تقرير الحضور والانصراف التفصيلي - كيان الشرقية", csv_df_with_total)
-        
-        col_down2.download_button(
-            "🖨️ تحميل للطباعة (رسمي PDF)",
-            data=html_report,
-            file_name=f"Attendance_{get_egypt_time().strftime('%Y%m%d')}.html",
-            mime='text/html',
-            type="primary",
-            use_container_width=True
-        )
+        col_down2.download_button("🖨️ تحميل للطباعة (رسمي PDF)", data=html_report, file_name=f"Attendance_{get_egypt_time().strftime('%Y%m%d')}.html", mime='text/html', type="primary", use_container_width=True)
     else:
         st.info("لا توجد سجلات تطابق خيارات البحث.")
 
@@ -1051,9 +1012,7 @@ def render_task_delegation(department="الكل"):
     tasks_log_df = pd.read_sql_query("""
         SELECT t.id, e.name as emp_name, e.department as dept, t.assigner, t.project_name, 
                t.task_desc, t.assign_date, t.due_date, t.status, COALESCE(t.employee_reply, '') as employee_reply
-        FROM Tasks t
-        LEFT JOIN Employees e ON t.emp_id = e.emp_id
-        ORDER BY t.id DESC
+        FROM Tasks t LEFT JOIN Employees e ON t.emp_id = e.emp_id ORDER BY t.id DESC
     """, conn)
     conn.close()
     
@@ -1179,13 +1138,12 @@ def render_manage_extracts():
     conn.close()
 
 # ==========================================
-# 4. الموديول المالي (أقساط الجهاز: المالك مطلع فقط بدون إضافة أو تعديل)
+# 4. الموديول المالي
 # ==========================================
 def render_financials_module(can_edit=True):
     ensure_shareholders_union_schema()
     active_role = st.session_state.get('current_role') or st.session_state.get('role')
     
-    # المالك (owner) مطلع فقط ولا يضيف أقساط جهاز
     if active_role == 'owner':
         can_edit = False
         
@@ -1252,9 +1210,6 @@ def render_financials_module(can_edit=True):
     else:
         st.info("لا توجد أقساط جهاز مسجلة حالياً.")
 
-# ==========================================
-# 5. نظام استثناء المالك لتقسيم ربع التنفيذ (على دفعتين أو 3)
-# ==========================================
 def render_quarter_split_exception_module(mode="sales", key_prefix=""):
     ensure_shareholders_union_schema()
     is_owner = (mode == "owner")
@@ -1392,12 +1347,8 @@ def render_quarter_split_exception_module(mode="sales", key_prefix=""):
     else:
         st.info("لا توجد طلبات استثناء لتقسيم الأرباع مسجلة حتى الآن.")
 
-def render_unit_resale_module(mode="sales"):
-    render_quarter_split_exception_module(mode=mode, key_prefix="resale_compat_")
-
 # ==========================================
-# 6. منظومة اتحاد الملاك المساهمين، الأرباع الـ 4، وأولوية اختيار الوحدات المميزة
-#    (إضافة العملاء والأقساط حصرية لخدمة العملاء sales فقط)
+# 6. منظومة اتحاد الملاك والأولوية
 # ==========================================
 def calculate_shareholder_priority_ranking(sh_df, inst_df, project_filter="الكل"):
     if sh_df.empty:
@@ -1490,15 +1441,14 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
     is_legal = (mode == "legal")
     is_owner = (mode == "owner")
     
-    # صلاحية إضافة العملاء/الملاك وجدولة الأقساط حصرية لخدمة العملاء (sales) فقط
     can_add_clients_or_installments = is_sales
     
     st.header("🤝 منظومة اتحاد الملاك المساهمين، الأرباع الـ 4، وأولوية اختيار الوحدات")
     
     crm_tabs = st.tabs([
-        "🥇 أولوية اختيار الوحدات المميزة وكشف الحساب (PDF)",
-        "🏗️ مراحل التنفيذ والأرباع الـ 4 والتحصيل والتصعيد", 
-        "👑 استثناء المالك لتقسيم ربع التنفيذ (دفعتين أو 3)",
+        "🥇 أولوية اختيار الوحدات المميزة وكشف الحساب",
+        "🏗️ مراحل التنفيذ والأرباع الـ 4 والتحصيل", 
+        "👑 استثناء المالك لتقسيم ربع التنفيذ",
         "🤝 سجل الملاك المساهمين وحصص الأرض (%)"
     ])
     
@@ -1526,10 +1476,10 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
 
     with crm_tabs[0]:
         st.subheader("🥇 ترتيب أولوية الملاك المساهمين لاختيار الوحدات المميزة (حسب أسبقية السداد)")
-        st.info("💡 يرتب النظام الملاك المساهمين داخل كل اتحاد آلياً بناءً على **نسبة الالتزام، السداد الكامل للربع بدون تقسيم، وأسبقية تاريخ السداد الفعلي**، بحيث يحصل المالك الأسرع التزاماً وسداداً على **الأولوية رقم (1) 🥇** عند تقسيم الأرض واختيار الوحدات المميزة.")
+        st.info("💡 يرتب النظام الملاك المساهمين داخل كل اتحاد آلياً بناءً على **نسبة الالتزام، السداد الكامل للربع بدون تقسيم، وأسبقية تاريخ السداد الفعلي**.")
 
         proj_filter_list = ["الكل"] + [f"اتحاد {i}" for i in range(1, 46)]
-        sel_proj_rank = st.selectbox("🏗️ اختر المشروع (الاتحاد) لعرض ترتيب أولوية الملاك المساهمين:", proj_filter_list, key=f"{key_prefix}proj_rank_sel")
+        sel_proj_rank = st.selectbox("🏗️ اختر المشروع (الاتحاد):", proj_filter_list, key=f"{key_prefix}proj_rank_sel")
 
         rank_df = calculate_shareholder_priority_ranking(sh_df, inst_df, project_filter=sel_proj_rank)
         if not rank_df.empty:
@@ -1542,16 +1492,15 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                     ac1, ac2, ac3 = st.columns([2, 2, 1])
                     sh_alloc_opts = rank_df['id'].astype(str) + " - " + rank_df['name'] + " (" + rank_df['priority_badge'] + ")"
                     sel_sh_alloc = ac1.selectbox("اختر المساهم:", sh_alloc_opts, key=f"{key_prefix}alloc_sh")
-                    chosen_unit_txt = ac2.text_input("الوحدة المميزة المختارة (مثال: واجهة بحري - الدور الأول شقة 101):", key=f"{key_prefix}alloc_u")
+                    chosen_unit_txt = ac2.text_input("الوحدة المميزة المختارة:", key=f"{key_prefix}alloc_u")
                     if ac3.button("تثبيت الوحدة ✅", key=f"{key_prefix}btn_alloc_u", type="primary"):
                         sh_id_alloc = int(sel_sh_alloc.split(" - ")[0])
                         db_execute("UPDATE Shareholders SET assigned_unit=%s WHERE id=%s", (chosen_unit_txt.strip(), sh_id_alloc))
-                        log_event("تخصيص وحدة لمساهم حسب الأولوية", f"مساهم رقم {sh_id_alloc} - الوحدة: {chosen_unit_txt}")
                         st.success("تم تثبيت الوحدة المختارة للمساهم بنجاح!")
                         st.rerun()
 
             html_rank = generate_html_report(f"تقرير أولوية الملاك المساهمين لاختيار الوحدات المميزة ({sel_proj_rank})", disp_rank)
-            st.download_button("🖨️ طباعة كشف أولوية اختيار الوحدات (PDF)", data=html_rank, file_name="Shareholders_Priority.html", mime="text/html", key=f"{key_prefix}dl_prio_pdf")
+            st.download_button("🖨️ طباعة كشف الأولوية (PDF)", data=html_rank, file_name="Shareholders_Priority.html", mime="text/html", key=f"{key_prefix}dl_prio_pdf")
         else:
             st.info("لا يوجد ملاك مساهمين مسجلين في هذا الاتحاد حالياً.")
 
@@ -1564,7 +1513,7 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
         all_sh_names = [n for n in all_sh_names if str(n).strip() != ""]
 
         if all_sh_names:
-            sel_sh_stmt = st.selectbox("👤 اختر المالك المساهم لعرض وطباعة كشف حسابه:", all_sh_names, key=f"{key_prefix}sh_stmt_sel")
+            sel_sh_stmt = st.selectbox("👤 اختر المالك المساهم:", all_sh_names, key=f"{key_prefix}sh_stmt_sel")
             sh_info = sh_df[sh_df['name'] == sel_sh_stmt] if not sh_df.empty else pd.DataFrame()
             sh_inst_all = inst_df[inst_df['client_name'] == sel_sh_stmt] if not inst_df.empty else pd.DataFrame()
             sh_inst_active = sh_inst_all[~sh_inst_all['status'].str.contains('ملغي', na=False)] if not sh_inst_all.empty else pd.DataFrame()
@@ -1580,10 +1529,10 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
             tot_rem = max(0.0, tot_req - tot_paid)
 
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("📐 نسبة المشاركة في الأرض", f"{sh_pct_val:.2f}% ({sh_proj_val})")
-            m2.metric("💰 إجمالي مطالبات الأرباع والأرض", f"{tot_req:,.2f} {main_curr}")
-            m3.metric("✅ إجمالي المسدد الفعلي", f"{tot_paid:,.2f} {main_curr}")
-            m4.metric("⏳ المتبقي على المساهم", f"{tot_rem:,.2f} {main_curr}")
+            m1.metric("📐 نسبة المشاركة", f"{sh_pct_val:.2f}% ({sh_proj_val})")
+            m2.metric("💰 إجمالي المطالبات", f"{tot_req:,.2f} {main_curr}")
+            m3.metric("✅ إجمالي المسدد", f"{tot_paid:,.2f} {main_curr}")
+            m4.metric("⏳ المتبقي", f"{tot_rem:,.2f} {main_curr}")
 
             if not sh_inst_all.empty:
                 stmt_tbl = sh_inst_all[['project_name', 'phase_name', 'quarter_name', 'amount', 'currency', 'due_date', 'paid_date', 'status', 'collection_stage']].copy()
@@ -1594,47 +1543,36 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                 <div class="summary-box">
                     <div class="summary-item"><span>اسم المالك المساهم</span><strong>{sel_sh_stmt}</strong></div>
                     <div class="summary-item"><span>المشروع ونسبة الأرض</span><strong>{sh_proj_val} ({sh_pct_val}%)</strong></div>
-                    <div class="summary-item"><span>حصة الأرض المالية</span><strong>{sh_land_val:,.2f} {main_curr}</strong></div>
                     <div class="summary-item"><span>إجمالي المسدد</span><strong style="color:green;">{tot_paid:,.2f} {main_curr}</strong></div>
                     <div class="summary-item"><span>المتبقي</span><strong style="color:#b80000;">{tot_rem:,.2f} {main_curr}</strong></div>
-                    <div class="summary-item"><span>الوحدة المخصصة</span><strong>{sh_unit_val}</strong></div>
                 </div>
                 """
-                html_sh_stmt = generate_html_report(f"كشف حساب مالك مساهم - {sel_sh_stmt}", stmt_tbl, extra_summary_html=extra_sum)
-                st.download_button(
-                    "🖨️ طباعة / تصدير كشف حساب المساهم (PDF)",
-                    data=html_sh_stmt,
-                    file_name=f"Shareholder_Statement_{sel_sh_stmt}.html",
-                    mime="text/html",
-                    type="primary",
-                    use_container_width=True,
-                    key=f"{key_prefix}dl_sh_stmt_btn"
-                )
+                html_sh_stmt = generate_html_report(f"كشف حساب - {sel_sh_stmt}", stmt_tbl, extra_summary_html=extra_sum)
+                st.download_button("🖨️ طباعة كشف الحساب (PDF)", data=html_sh_stmt, file_name=f"Statement_{sel_sh_stmt}.html", mime="text/html", type="primary", use_container_width=True, key=f"{key_prefix}dl_sh_stmt_btn")
 
     with crm_tabs[1]:
         st.subheader("🏗️ مراحل التنفيذ (الأرباع الـ 4) ومتابعة التحصيل والتصعيد")
         
         if can_add_clients_or_installments:
             col_q_auto, col_q_single = st.columns(2)
-            
             with col_q_auto:
-                with st.expander("⚡ توزيع تكلفة ربع تنفيذ آلياً على مساهمي الاتحاد (خدمة العملاء)", expanded=True):
-                    with st.form(f"{key_prefix}auto_dist_quarter_form"):
-                        q_proj = st.selectbox("اختر المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)], key=f"{key_prefix}ap_proj")
-                        q_phase = st.text_input("اسم مرحلة التنفيذ (مثال: مرحلة الأساسات / الهيكل الخرساني)", value="مرحلة الإنشاءات")
-                        q_quarter = st.selectbox("اختر الربع (من الأرباع الـ 4 للمرحلة)", QUARTER_OPTIONS, key=f"{key_prefix}ap_q")
+                with st.expander("⚡ توزيع تكلفة ربع تنفيذ آلياً (خدمة العملاء)", expanded=True):
+                    with st.form(f"{key_prefix}auto_dist_form"):
+                        q_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)], key=f"{key_prefix}ap_proj")
+                        q_phase = st.text_input("مرحلة التنفيذ", value="مرحلة الإنشاءات")
+                        q_quarter = st.selectbox("الربع", QUARTER_OPTIONS, key=f"{key_prefix}ap_q")
                         
                         qc1, qc2 = st.columns(2)
-                        q_total_cost = qc1.number_input("إجمالي تكلفة هذا الربع للمشروع بالكامل", min_value=0.0, step=10000.0)
+                        q_total_cost = qc1.number_input("إجمالي التكلفة للمشروع", min_value=0.0, step=10000.0)
                         q_curr = qc2.selectbox("العملة", CURRENCY_OPTIONS, key=f"{key_prefix}ap_curr")
-                        q_due = st.date_input("تاريخ استحقاق سداد الربع (دفعة واحدة)")
+                        q_due = st.date_input("تاريخ استحقاق السداد")
                         
-                        if st.form_submit_button("توزيع الربع آلياً على جميع مساهمي الاتحاد 📊", type="primary", use_container_width=True):
+                        if st.form_submit_button("توزيع الربع آلياً 📊", type="primary", use_container_width=True):
                             proj_shs = sh_df[sh_df['project_name'] == q_proj] if not sh_df.empty else pd.DataFrame()
                             if proj_shs.empty:
-                                st.error(f"⚠️ لا يوجد ملاك مساهمين مسجلين في ({q_proj}) بعد! سجلهم أولاً في تبويب (سجل الملاك المساهمين).")
+                                st.error("⚠️ لا يوجد ملاك مساهمين مسجلين في هذا الاتحاد.")
                             elif q_total_cost <= 0:
-                                st.error("يرجى إدخال إجمالي تكلفة الربع للمشروع.")
+                                st.error("يرجى إدخال التكلفة.")
                             else:
                                 count_inserted = 0
                                 for _, sh_r in proj_shs.iterrows():
@@ -1648,30 +1586,26 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '', 'مستحق (لم يُدفع)', %s, 'متابعة خدمة العملاء', '', FALSE)
                                         """, (q_proj, q_proj, sh_r['name'], q_phase, q_quarter, sh_amount, q_curr, q_due.strftime("%Y/%m/%d"), note_desc))
                                         count_inserted += 1
-                                log_event("توزيع ربع تنفيذ آلياً (خدمة عملاء)", f"{q_proj} - {q_phase} ({q_quarter}) بقيمة كلية {q_total_cost} على {count_inserted} مساهم")
-                                st.success(f"✅ تم توزيع ({q_quarter}) آلياً على ({count_inserted}) مالك مساهم في ({q_proj}) كلٌ حسب نسبته!")
+                                st.success(f"✅ تم التوزيع على ({count_inserted}) مساهم بنجاح!")
                                 st.rerun()
 
             with col_q_single:
-                with st.expander("➕ تسجيل مطالبة ربع تنفيذ لمالك مساهم محدد (خدمة العملاء)", expanded=True):
-                    with st.form(f"{key_prefix}single_sh_quarter_form"):
+                with st.expander("➕ تسجيل مطالبة لمالك محدد (خدمة العملاء)", expanded=True):
+                    with st.form(f"{key_prefix}single_sh_form"):
                         s_proj = st.selectbox("المشروع (الاتحاد)", [f"اتحاد {i}" for i in range(1, 46)], key=f"{key_prefix}sp_proj")
                         sh_names_in_list = sh_df['name'].dropna().unique().tolist() if not sh_df.empty else []
-                        if sh_names_in_list:
-                            s_sh_name = st.selectbox("اختر المالك المساهم", sh_names_in_list, key=f"{key_prefix}sp_sh")
-                        else:
-                            s_sh_name = st.text_input("اسم المالك المساهم")
-                            
+                        s_sh_name = st.selectbox("اختر المالك", sh_names_in_list, key=f"{key_prefix}sp_sh") if sh_names_in_list else st.text_input("اسم المالك")
+                        
                         sc1, sc2 = st.columns(2)
                         s_phase = sc1.text_input("مرحلة التنفيذ", value="مرحلة الإنشاءات", key=f"{key_prefix}sp_ph")
-                        s_quarter = sc2.selectbox("الربع (1 / 2 / 3 / 4)", QUARTER_OPTIONS, key=f"{key_prefix}sp_q")
+                        s_quarter = sc2.selectbox("الربع", QUARTER_OPTIONS, key=f"{key_prefix}sp_q")
                         
                         sc3, sc4, sc5 = st.columns(3)
-                        s_amt = sc3.number_input("المبلغ المطلوب (دفعة واحدة)", min_value=0.0, step=5000.0)
+                        s_amt = sc3.number_input("المبلغ", min_value=0.0, step=5000.0)
                         s_curr = sc4.selectbox("العملة", CURRENCY_OPTIONS, key=f"{key_prefix}sp_curr")
-                        s_due = sc5.date_input("تاريخ الاستحقاق", key=f"{key_prefix}sp_due")
+                        s_due = sc5.date_input("الاستحقاق", key=f"{key_prefix}sp_due")
                         
-                        if st.form_submit_button("إضافة مطالبة الربع للمساهم ➕", type="primary", use_container_width=True):
+                        if st.form_submit_button("إضافة ➕", type="primary", use_container_width=True):
                             if s_sh_name and s_amt > 0:
                                 note_desc = f"{s_phase} - {s_quarter}"
                                 db_execute("""
@@ -1679,48 +1613,44 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                                     (unit_code, project_name, client_name, phase_name, quarter_name, amount, currency, due_date, paid_date, status, notes, collection_stage, call_notes, is_split_exception)
                                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '', 'مستحق (لم يُدفع)', %s, 'متابعة خدمة العملاء', '', FALSE)
                                 """, (s_proj, s_proj, s_sh_name.strip(), s_phase, s_quarter, s_amt, s_curr, s_due.strftime("%Y/%m/%d"), note_desc))
-                                log_event("إضافة ربع تنفيذ لمساهم (خدمة عملاء)", f"المساهم: {s_sh_name} - {s_proj} - {s_quarter}: {s_amt} {s_curr}")
-                                st.success("تم تسجيل مطالبة الربع للمساهم بنجاح!")
+                                st.success("تم التسجيل بنجاح!")
                                 st.rerun()
                             else:
-                                st.error("يرجى اختيار المساهم وإدخال المبلغ.")
+                                st.error("أكمل البيانات.")
         else:
-            st.info("👁️ **وضع الاطلاع والمتابعة:** إضافة وجدولة الأقساط/الأرباع للملاك المساهمين متاحة لقسم **خدمة العملاء** فقط.")
+            st.info("👁️ **وضع الاطلاع:** إضافة وجدولة الأقساط متاحة لخدمة العملاء فقط.")
 
         if not inst_df.empty:
             unpaid_df = inst_df[~inst_df['status'].isin(['مدفوع', 'مدفوع في الموعد', 'مدفوع متأخر']) & (~inst_df['status'].str.contains('ملغي', na=False))]
             
             if is_sales and not unpaid_df.empty:
-                st.markdown("#### 📞 متابعة وتصعيد خدمة العملاء مع المساهمين المتأخرين")
+                st.markdown("#### 📞 متابعة وتصعيد خدمة العملاء")
                 cs_df = unpaid_df[unpaid_df['collection_stage'].isin(['متابعة خدمة العملاء', 'تمت المكالمة الأولى (خدمة العملاء)', 'تمت المكالمة الثانية (خدمة العملاء)'])]
                 if not cs_df.empty:
-                    cs_opts = cs_df['id'].astype(str) + " - المساهم: " + cs_df['client_name'].fillna('') + " | " + cs_df['project_name'].fillna('') + " (" + cs_df['quarter_name'].fillna('') + ") | " + cs_df['amount'].astype(str) + " " + cs_df['currency'].fillna('')
-                    sel_cs_inst = st.selectbox("اختر مطالبة المساهم:", cs_opts, key=f"{key_prefix}cs_esc_sel")
+                    cs_opts = cs_df['id'].astype(str) + " - " + cs_df['client_name'].fillna('') + " | " + cs_df['project_name'].fillna('') + " (" + cs_df['quarter_name'].fillna('') + ")"
+                    sel_cs_inst = st.selectbox("اختر مطالبة:", cs_opts, key=f"{key_prefix}cs_esc_sel")
                     cs_note_input = st.text_input("ملاحظة المكالمة:", key=f"{key_prefix}cs_note_in")
-                    
                     b1, b2, b3, b4 = st.columns(4)
                     target_id = int(sel_cs_inst.split(" - ")[0])
                     old_notes = cs_df[cs_df['id'] == target_id].iloc[0]['call_notes'] or ""
                     now_tag = get_egypt_time().strftime("%Y/%m/%d %H:%M")
-                    
-                    if b1.button("📞 1. المكالمة الأولى", key=f"{key_prefix}b1_cs", use_container_width=True):
-                        new_log = f"{old_notes} | [مكالمة 1 خدمة عملاء {now_tag}: {cs_note_input or 'تم الاتصال'}]".strip(" |")
+                    if b1.button("📞 1. مكالمة 1", key=f"{key_prefix}b1_cs", use_container_width=True):
+                        new_log = f"{old_notes} | [مكالمة 1 {now_tag}: {cs_note_input}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='تمت المكالمة الأولى (خدمة العملاء)', status='متأخر', call_notes=%s WHERE id=%s", (new_log, target_id))
                         st.rerun()
-                    if b2.button("📞 2. المكالمة الثانية", key=f"{key_prefix}b2_cs", use_container_width=True):
-                        new_log = f"{old_notes} | [مكالمة 2 خدمة عملاء {now_tag}: {cs_note_input or 'تم الاتصال 2'}]".strip(" |")
+                    if b2.button("📞 2. مكالمة 2", key=f"{key_prefix}b2_cs", use_container_width=True):
+                        new_log = f"{old_notes} | [مكالمة 2 {now_tag}: {cs_note_input}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='تمت المكالمة الثانية (خدمة العملاء)', status='متأخر', call_notes=%s WHERE id=%s", (new_log, target_id))
                         st.rerun()
-                    if b3.button("⚖️ 3. تحويل للشؤون القانونية", key=f"{key_prefix}b3_cs", type="primary", use_container_width=True):
-                        new_log = f"{old_notes} | [تحويل للقانونية {now_tag}: {cs_note_input}]".strip(" |")
+                    if b3.button("⚖️ 3. للشؤون القانونية", key=f"{key_prefix}b3_cs", type="primary", use_container_width=True):
+                        new_log = f"{old_notes} | [قانونية {now_tag}: {cs_note_input}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='محول للشؤون القانونية', status='متأخر', call_notes=%s WHERE id=%s", (new_log, target_id))
                         st.rerun()
-                    if b4.button("✅ تم السداد وتثبيت الأسبقية", key=f"{key_prefix}b4_cs", use_container_width=True):
-                        new_log = f"{old_notes} | [تم السداد {now_tag}]".strip(" |")
-                        db_execute("UPDATE UnitInstallments SET status='مدفوع في الموعد', paid_date=%s, collection_stage='تم السداد / مغلق', call_notes=%s WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), new_log, target_id))
+                    if b4.button("✅ تم السداد", key=f"{key_prefix}b4_cs", use_container_width=True):
+                        db_execute("UPDATE UnitInstallments SET status='مدفوع في الموعد', paid_date=%s, collection_stage='تم السداد / مغلق' WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), target_id))
                         st.rerun()
 
-           if is_legal and not unpaid_df.empty:
+            if is_legal and not unpaid_df.empty:
                 st.markdown("#### ⚖️ مطالبات المساهمين المحولة للشؤون القانونية من خدمة العملاء")
                 leg_df = unpaid_df[unpaid_df['collection_stage'].isin(['محول للشؤون القانونية', 'تمت مكالمة الشؤون القانونية'])]
                 if not leg_df.empty:
@@ -1738,22 +1668,19 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                     lb1, lb2, lb3 = st.columns(3)
                     now_tag = get_egypt_time().strftime("%Y/%m/%d %H:%M")
                     
-                    # 1. زر محاولة الاتصال والإنذار
                     if lb1.button("📞 تسجيل مكالمة/إنذار قانوني", key=f"{key_prefix}lb1", use_container_width=True):
                         new_log = f"{old_leg_notes} | [إنذار قانوني {now_tag}: {leg_note_input}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='تمت مكالمة الشؤون القانونية', call_notes=%s WHERE id=%s", (new_log, target_leg_id))
                         st.rerun()
                         
-                    # 2. زر التصعيد للمالك (لا يظهر إلا لو الحالة 'تمت مكالمة الشؤون القانونية')
                     if current_stage == 'تمت مكالمة الشؤون القانونية':
                         if lb2.button("👑 تصعيد لمالك الشركة", key=f"{key_prefix}lb2", type="primary", use_container_width=True):
                             new_log = f"{old_leg_notes} | [تصعيد للمالك بعد محاولة {now_tag}: {leg_note_input}]".strip(" |")
                             db_execute("UPDATE UnitInstallments SET collection_stage='محول للمالك (لتدخل الإدارة العليا)', call_notes=%s WHERE id=%s", (new_log, target_leg_id))
                             st.rerun()
                     else:
-                        lb2.info("⚠️ زر تحويل العميل للمالك سيظهر هنا بعد تسجيل مكالمة معه أولاً.")
+                        lb2.info("⚠️ زر تصعيد للمالك سيظهر بعد تسجيل مكالمة/إنذار أولاً.")
                         
-                    # 3. زر السداد
                     if lb3.button("✅ تم السداد والتسوية", key=f"{key_prefix}lb3", use_container_width=True):
                         db_execute("UPDATE UnitInstallments SET status='مدفوع متأخر', paid_date=%s, collection_stage='تم السداد / مغلق' WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), target_leg_id))
                         st.rerun()
@@ -1765,45 +1692,44 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                 if not own_esc_df.empty:
                     st.error(f"🚨 يوجد ({len(own_esc_df)}) ملف متأخرات تم تصعيده إليك بعد محاولات خدمة العملاء والشؤون القانونية!")
                     for _, o_row in own_esc_df.iterrows():
-                        with st.expander(f"👑 ملف مصعد للمالك: المساهم ({o_row['client_name']}) | {o_row['project_name']} - {o_row['quarter_name']} | ({o_row['amount']:,.2f} {o_row['currency']})", expanded=True):
-                            st.warning(f"**سجل المكالمات والتصعيد:** {o_row['call_notes']}")
+                        with st.expander(f"👑 مصعد للمالك: المساهم ({o_row['client_name']}) | {o_row['project_name']} - {o_row['quarter_name']}", expanded=True):
+                            st.warning(f"**سجل المكالمات:** {o_row['call_notes']}")
                             oc1, oc2 = st.columns(2)
-                            if oc1.button("✅ تم التسوية والسداد بتدخل المالك", key=f"{key_prefix}own_set_{o_row['id']}", type="primary", use_container_width=True):
+                            if oc1.button("✅ تم السداد بتدخل المالك", key=f"{key_prefix}own_set_{o_row['id']}", type="primary", use_container_width=True):
                                 db_execute("UPDATE UnitInstallments SET status='مدفوع متأخر', paid_date=%s, collection_stage='تم السداد / مغلق' WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), o_row['id']))
                                 st.rerun()
-                            if oc2.button("🔄 منح مهلة وإعادة الملف لخدمة العملاء", key=f"{key_prefix}own_ret_{o_row['id']}", use_container_width=True):
+                            if oc2.button("🔄 مهلة وإعادة لخدمة العملاء", key=f"{key_prefix}own_ret_{o_row['id']}", use_container_width=True):
                                 db_execute("UPDATE UnitInstallments SET collection_stage='متابعة خدمة العملاء' WHERE id=%s", (o_row['id'],))
                                 st.rerun()
 
             if is_sales or is_accountant:
-                with st.expander("💳 تأكيد سداد ربع تنفيذ وتحديد تاريخ السداد الفعلي (لتحديث أولوية اختيار الوحدات 🥇)"):
+                with st.expander("💳 تأكيد سداد وتحديث حالة الدفع (يدوياً)"):
                     up1, up2, up3, up4 = st.columns([2.5, 1.5, 1.5, 1])
-                    inst_opts = inst_df['id'].astype(str) + " - " + inst_df['client_name'].fillna('') + " | " + inst_df['project_name'].fillna('') + " (" + inst_df['quarter_name'].fillna('') + " - " + inst_df['amount'].astype(str) + " " + inst_df['currency'].fillna('') + ")"
-                    sel_inst_to_upd = up1.selectbox("اختر دفعة الربع:", inst_opts, key=f"{key_prefix}upd_q_sel")
+                    inst_opts = inst_df['id'].astype(str) + " - " + inst_df['client_name'].fillna('') + " | " + inst_df['quarter_name'].fillna('')
+                    sel_inst_to_upd = up1.selectbox("اختر دفعة:", inst_opts, key=f"{key_prefix}upd_q_sel")
                     new_inst_st = up2.selectbox("حالة الدفع:", ["مدفوع في الموعد", "مدفوع متأخر", "مستحق (لم يُدفع)", "متأخر"], key=f"{key_prefix}upd_q_st")
                     actual_paid_dt = up3.date_input("تاريخ السداد الفعلي", key=f"{key_prefix}upd_q_dt")
-                    if up4.button("تأكيد السداد ✅", key=f"{key_prefix}btn_upd_q", type="primary"):
+                    if up4.button("تأكيد ✅", key=f"{key_prefix}btn_upd_q", type="primary"):
                         inst_id_val = int(sel_inst_to_upd.split(" - ")[0])
                         paid_dt_val = actual_paid_dt.strftime("%Y/%m/%d") if "مدفوع" in new_inst_st else ""
                         new_stage = "تم السداد / مغلق" if "مدفوع" in new_inst_st else "متابعة خدمة العملاء"
                         db_execute("UPDATE UnitInstallments SET status=%s, paid_date=%s, collection_stage=%s WHERE id=%s", (new_inst_st, paid_dt_val, new_stage, inst_id_val))
-                        log_event("تأكيد سداد ربع تنفيذ", f"دفعة رقم {inst_id_val} - الحالة: {new_inst_st} - تاريخ السداد: {paid_dt_val}")
-                        st.success("تم تسجيل السداد وتحديث ترتيب أولوية المساهم لاختيار الوحدات!")
+                        st.success("تم تأكيد السداد بنجاح!")
                         st.rerun()
 
             if can_add_clients_or_installments:
-                with st.expander("🗑️ حذف مطالبة ربع مضافة بالخطأ (خاص بخدمة العملاء)"):
+                with st.expander("🗑️ حذف مطالبة مضافة بالخطأ (خدمة العملاء)"):
                     del_c1, del_c2 = st.columns([3, 1])
-                    all_inst_opts = inst_df['id'].astype(str) + " - المساهم: " + inst_df['client_name'].fillna('') + " | " + inst_df['quarter_name'].fillna('') + " (" + inst_df['amount'].astype(str) + ")"
-                    sel_inst_del = del_c1.selectbox("اختر المطالبة المراد حذفها:", all_inst_opts, key=f"{key_prefix}del_inst_sel")
-                    if del_c2.button("حذف المطالبة 🗑️", key=f"{key_prefix}btn_del_inst"):
+                    all_inst_opts = inst_df['id'].astype(str) + " - المساهم: " + inst_df['client_name'].fillna('') + " | " + inst_df['quarter_name'].fillna('')
+                    sel_inst_del = del_c1.selectbox("اختر المطالبة:", all_inst_opts, key=f"{key_prefix}del_inst_sel")
+                    if del_c2.button("حذف 🗑️", key=f"{key_prefix}btn_del_inst"):
                         inst_id_del = int(sel_inst_del.split(" - ")[0])
                         db_execute("DELETE FROM UnitInstallments WHERE id=%s", (inst_id_del,))
                         st.success("تم الحذف بنجاح!")
                         st.rerun()
 
             disp_inst = inst_df[['project_name', 'client_name', 'phase_name', 'quarter_name', 'amount', 'currency', 'due_date', 'paid_date', 'status', 'collection_stage', 'notes']].copy()
-            disp_inst.columns = ['الاتحاد', 'اسم المالك المساهم', 'المرحلة', 'الربع (1-4)', 'المبلغ المطلوب', 'العملة', 'تاريخ الاستحقاق', 'تاريخ السداد الفعلي', 'حالة الدفع', 'مرحلة المتابعة', 'ملاحظات']
+            disp_inst.columns = ['الاتحاد', 'المالك المساهم', 'المرحلة', 'الربع (1-4)', 'المبلغ المطلوب', 'العملة', 'تاريخ الاستحقاق', 'تاريخ السداد الفعلي', 'حالة الدفع', 'مرحلة المتابعة', 'ملاحظات']
             st.dataframe(disp_inst, use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد مطالبات أرباع تنفيذ مسجلة بعد.")
@@ -1819,19 +1745,19 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                 c1, c2, c3 = st.columns(3)
                 sh_name = c1.text_input("اسم المالك المساهم رباعي *")
                 sh_phone = c2.text_input("رقم الهاتف / واتساب *")
-                sh_proj = c3.selectbox("المشروع المشترك فيه (الاتحاد) *", [f"اتحاد {i}" for i in range(1, 46)], key=f"{key_prefix}sh_proj_in")
+                sh_proj = c3.selectbox("المشروع (الاتحاد) *", [f"اتحاد {i}" for i in range(1, 46)], key=f"{key_prefix}sh_proj_in")
                 
                 c4, c5, c6 = st.columns(3)
-                sh_pct = c4.number_input("نسبة مشاركته في الأرض (%) *", min_value=0.1, max_value=100.0, value=10.0, step=0.5)
-                sh_land_amt = c5.number_input("قيمة حصته المالية في الأرض", min_value=0.0, step=10000.0)
+                sh_pct = c4.number_input("نسبة الأرض (%) *", min_value=0.1, max_value=100.0, value=10.0, step=0.5)
+                sh_land_amt = c5.number_input("قيمة الحصة في الأرض", min_value=0.0, step=10000.0)
                 sh_curr = c6.selectbox("العملة", CURRENCY_OPTIONS, key=f"{key_prefix}sh_curr_in")
                 
                 c7, c8, c9 = st.columns(3)
                 sh_nid = c7.text_input("الرقم القومي")
-                sh_unit = c8.text_input("الوحدة المخصصة (اختياري - يحدد حسب الأولوية)", value="تحدد حسب أولوية السداد")
-                sh_notes = c9.text_input("ملاحظات المساهمة")
+                sh_unit = c8.text_input("الوحدة المخصصة", value="تحدد حسب أولوية السداد")
+                sh_notes = c9.text_input("ملاحظات")
                 
-                if st.form_submit_button("حفظ بيانات المالك المساهم وحصته 💾", type="primary"):
+                if st.form_submit_button("حفظ بيانات المالك 💾", type="primary"):
                     if sh_name.strip() and sh_phone.strip():
                         existing_sh = db_fetchone("SELECT id FROM Shareholders WHERE name=%s AND project_name=%s", (sh_name.strip(), sh_proj))
                         if existing_sh:
@@ -1846,60 +1772,44 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                                 VALUES (%s, %s, %s, '', %s, %s, %s, %s, %s, %s)
                             """, (sh_name.strip(), sh_phone.strip(), sh_nid.strip(), sh_proj, sh_pct, sh_land_amt, sh_curr, sh_unit.strip(), sh_notes.strip()))
                         
-                        try:
-                            db_execute("INSERT INTO Clients (name, phone, national_id, address, notes) VALUES (%s, %s, %s, %s, %s)", (sh_name.strip(), sh_phone.strip(), sh_nid.strip(), sh_proj, f"مساهم بنسبة {sh_pct}%"))
-                        except Exception:
-                            pass
-
-                        log_event("تسجيل مالك مساهم (خدمة عملاء)", f"المساهم: {sh_name} - {sh_proj} - نسبة الأرض: {sh_pct}% - قيمة: {sh_land_amt} {sh_curr}")
-                        st.success(f"تم حفظ بيانات المالك المساهم ({sh_name}) في ({sh_proj}) بنسبة ({sh_pct}%) بنجاح!")
+                        st.success(f"تم حفظ بيانات المالك ({sh_name}) بنجاح!")
                         st.rerun()
                     else:
-                        st.error("يرجى إدخال اسم المالك المساهم ورقم الهاتف.")
+                        st.error("يرجى إدخال اسم المالك ورقم الهاتف.")
         else:
-            st.info("👁️ **وضع الاطلاع فقط:** إضافة الملاك المساهمين/العملاء الجدد متاحة لقسم **خدمة العملاء** فقط.")
+            st.info("👁️ **وضع الاطلاع:** إضافة الملاك المساهمين متاحة لقسم **خدمة العملاء** فقط.")
 
         if not sh_df.empty:
-            st.markdown("#### 📊 ملخص إجمالي نسب الملكية المسجلة في كل اتحاد")
-            proj_pct_sum = sh_df.groupby('project_name').agg(
-                عدد_المساهمين=('id', 'count'),
-                إجمالي_النسب_المسجلة=('land_share_pct', 'sum'),
-                إجمالي_حصص_الأرض=('land_share_amount', 'sum')
-            ).reset_index()
-            proj_pct_sum['النسبة المتبقية غير الموزعة %'] = (100.0 - proj_pct_sum['إجمالي_النسب_المسجلة']).round(2)
-            proj_pct_sum.columns = ['الاتحاد', 'عدد الملاك المساهمين', 'إجمالي النسب المسجلة %', 'إجمالي قيمة حصص الأرض', 'النسبة المتبقية %']
+            proj_pct_sum = sh_df.groupby('project_name').agg(عدد_المساهمين=('id', 'count'), إجمالي_النسب_المسجلة=('land_share_pct', 'sum')).reset_index()
+            proj_pct_sum['النسبة المتبقية %'] = (100.0 - proj_pct_sum['إجمالي_النسب_المسجلة']).round(2)
             st.dataframe(proj_pct_sum, use_container_width=True, hide_index=True)
 
             if can_add_clients_or_installments:
-                with st.expander("🗑️ حذف مالك مساهم من السجل (خاص بخدمة العملاء)"):
+                with st.expander("🗑️ حذف مالك مساهم (خدمة العملاء)"):
                     dc1, dc2, dc3 = st.columns([2, 2, 1])
-                    sh_del_opts = sh_df['id'].astype(str) + " - " + sh_df['name'].fillna('') + " (" + sh_df['project_name'].fillna('') + " - " + sh_df['land_share_pct'].astype(str) + "%)"
-                    sel_sh_del = dc1.selectbox("اختر المساهم المراد حذفه:", sh_del_opts, key=f"{key_prefix}sel_sh_del")
+                    sh_del_opts = sh_df['id'].astype(str) + " - " + sh_df['name'].fillna('')
+                    sel_sh_del = dc1.selectbox("اختر المساهم:", sh_del_opts, key=f"{key_prefix}sel_sh_del")
                     cascade_sh = dc2.checkbox("مسح مطالبات الأرباع المرتبطة به أيضاً", value=True, key=f"{key_prefix}casc_sh")
-                    if dc3.button("حذف المساهم 🗑️", key=f"{key_prefix}btn_del_sh"):
+                    if dc3.button("حذف 🗑️", key=f"{key_prefix}btn_del_sh"):
                         sh_id_del = int(sel_sh_del.split(" - ")[0])
                         sh_row_del = sh_df[sh_df['id'] == sh_id_del].iloc[0]
                         db_execute("DELETE FROM Shareholders WHERE id=%s", (sh_id_del,))
                         if cascade_sh:
                             db_execute("DELETE FROM UnitInstallments WHERE client_name=%s AND project_name=%s", (sh_row_del['name'], sh_row_del['project_name']))
-                        log_event("حذف مالك مساهم", f"تم مسح المساهم: {sh_row_del['name']}")
                         st.success("تم الحذف بنجاح!")
                         st.rerun()
 
-            disp_sh = sh_df[['project_name', 'name', 'phone', 'land_share_pct', 'land_share_amount', 'currency', 'assigned_unit', 'national_id', 'notes']].copy()
-            disp_sh.columns = ['الاتحاد', 'اسم المالك المساهم', 'رقم الهاتف', 'نسبة المشاركة في الأرض %', 'الحصة المالية للأرض', 'العملة', 'الوحدة المخصصة', 'الرقم القومي', 'ملاحظات']
+            disp_sh = sh_df[['project_name', 'name', 'phone', 'land_share_pct', 'land_share_amount', 'currency', 'assigned_unit']].copy()
+            disp_sh.columns = ['الاتحاد', 'اسم المالك', 'رقم الهاتف', 'النسبة %', 'الحصة', 'العملة', 'الوحدة المخصصة']
             st.dataframe(disp_sh, use_container_width=True, hide_index=True)
-        else:
-            st.info("لا يوجد ملاك مساهمين مسجلين بعد.")
 
 # ==========================================
-# 7. الشاشة المشتركة للموظفين (البصمة والتقارير والرصيد السنوي)
+# 7. الشاشة المشتركة للموظفين (البصمة والتقارير)
 # ==========================================
 def render_employee_dashboard(emp_id, balance):
     stats = get_employee_stats(emp_id)
     delay_mins = stats[1]
     overtime_mins = stats[3]
-    
     today_date = get_egypt_time().strftime("%Y/%m/%d")
     current_year = get_egypt_time().strftime("%Y")
     now_dt = get_egypt_time()
@@ -1918,22 +1828,14 @@ def render_employee_dashboard(emp_id, balance):
     try:
         has_checked_in = db_fetchone("SELECT COUNT(*) FROM WebAttendance WHERE emp_id=%s AND date=%s AND action='حضور'", (emp_id, today_date))[0] > 0
         if not has_checked_in and (now_dt.hour > 11 or (now_dt.hour == 11 and now_dt.minute >= 30)):
-            st.error("⏰ **تنبيه عاجل:** لقد تجاوزت الساعة 11:30 صباحاً ولم تقم بتسجيل حضورك اليوم! يرجى إثبات الحضور فوراً لتجنب خصم اليوم.")
-    except Exception:
-        pass
-
-    try:
-        pending_tasks = db_fetchone("SELECT COUNT(*) FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", (emp_id,))[0]
-        if pending_tasks > 0:
-            st.warning(f"🔔 **تنبيه عمل:** لديك ({pending_tasks}) مهمة مسندة بانتظار إنجازها! راجع قسم 'بصمة وتقارير'.")
+            st.error("⏰ **تنبيه عاجل:** لقد تجاوزت الساعة 11:30 صباحاً ولم تقم بتسجيل حضورك اليوم!")
     except Exception:
         pass
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric(f"رصيد الإجازات المتبقي ({current_year})", f"{balance} يوم", f"تم استنفاد {used_leaves_year} يوم هذا العام")
+    c1.metric(f"رصيد الإجازات ({current_year})", f"{balance} يوم", f"استنفاد {used_leaves_year} يوم")
     c2.metric("التأخيرات الكلية", f"{format_hhmm(delay_mins)} ساعة")
     c3.metric("الوقت الإضافي", f"{format_hhmm(overtime_mins)} ساعة")
-    
     try:
         pending = db_fetchone("SELECT COUNT(*) FROM Requests WHERE emp_id=%s AND status='قيد الانتظار'", (emp_id,))[0]
         c4.metric("طلبات معلقة", pending)
@@ -1946,7 +1848,7 @@ def render_employee_dashboard(emp_id, balance):
     if sub_nav == "📍 بصمة وتقارير وإنجاز مهام":
         locations = db_fetchall("SELECT name, lat, lon, radius FROM Locations ORDER BY name")
         if not locations:
-            st.error("لم يتم تسجيل فروع أو مواقع للشركة بعد.")
+            st.error("لم يتم تسجيل فروع للشركة بعد.")
         elif not GEO_AVAILABLE:
             st.error("مكتبة Location غير مثبتة.")
         else:
@@ -1954,7 +1856,6 @@ def render_employee_dashboard(emp_id, balance):
             if loc and isinstance(loc, dict) and 'coords' in loc:
                 emp_lat = float(loc['coords']['latitude'])
                 emp_lon = float(loc['coords']['longitude'])
-                
                 min_distance = float('inf')
                 closest_loc_name = None
                 is_allowed = False
@@ -1987,12 +1888,10 @@ def render_employee_dashboard(emp_id, balance):
                         if not has_checked_in:
                             if st.button("🟢 تسجيل حضور اليوم", use_container_width=True):
                                 db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo) VALUES (%s, %s, %s, 'حضور', %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri))
-                                log_event("بصمة حضور", f"الموقع: {closest_loc_name}")
                                 st.success("تم تسجيل الحضور بنجاح!")
                                 st.rerun() 
                         else:
                             st.info("✅ تم تسجيل حضورك اليوم بنجاح.")
-                            
                             conn = get_db_connection()
                             try:
                                 tasks = pd.read_sql_query("SELECT id, assigner, project_name, task_desc, due_date FROM Tasks WHERE emp_id=%s AND status='قيد التنفيذ'", conn, params=(emp_id,))
@@ -2006,12 +1905,10 @@ def render_employee_dashboard(emp_id, balance):
                                     with st.expander(f"🔴 مهمة بمشروع: {row['project_name']} (التسليم: {row['due_date']})"):
                                         st.write(f"**التفاصيل:** {row['task_desc']}")
                                         task_reply = st.text_area("تقرير إنجاز المهمة", key=f"reply_{row['id']}")
-                                        
                                         if st.button("إتمام المهمة ✅", key=f"done_{row['id']}", type="primary"):
                                             if task_reply.strip():
                                                 db_execute("UPDATE Tasks SET status='مكتملة', employee_reply=%s WHERE id=%s", (task_reply, row['id']))
                                                 db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'إنجاز مهمة', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, row['project_name'], "إنجاز مهمة مسندة: " + task_reply))
-                                                log_event("إنجاز مهمة", f"مشروع: {row['project_name']}")
                                                 st.success("تم الإغلاق وإرسال التقرير للمدير!")
                                                 st.rerun()
                                             else:
@@ -2019,50 +1916,46 @@ def render_employee_dashboard(emp_id, balance):
                             
                             st.markdown("---")
                             st.markdown("### 📝 إضافة تقرير حر أو تسجيل انصراف")
-                            selected_proj = st.selectbox("المشروع (الاتحاد) / مهامك", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى"])
+                            selected_proj = st.selectbox("المشروع / مهامك", [f"اتحاد {i}" for i in range(1, 46)] + ["أخرى"])
                             
                             if is_exempt:
                                 st.info("💡 حسابك مُعفى من إجبارية تقديم التقرير اليومي، يمكنك تسجيل الانصراف مباشرة.")
                                 daily_rep = st.text_area("تفاصيل الإنجاز اليومي (اختياري)", placeholder="يمكنك تركه فارغاً...")
                             else:
-                                daily_rep = st.text_area("تفاصيل الإنجاز اليومي (إجباري)*", placeholder="يجب كتابة ما أنجزته اليوم لتتمكن من رفع التقرير أو الانصراف...")
+                                daily_rep = st.text_area("تفاصيل الإنجاز اليومي (إجباري)*", placeholder="يجب كتابة ما أنجزته اليوم...")
 
                             c_btn1, c_btn2 = st.columns(2)
                             with c_btn1:
                                 if st.button("➕ رفع التقرير الحر (مستمر بالعمل)", use_container_width=True):
                                     if is_exempt or daily_rep.strip():
                                         db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'تقرير', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
-                                        log_event("رفع تقرير يومي", f"مشروع: {selected_proj}")
                                         st.success("تم حفظ إنجازك!")
                                     else:
-                                        st.error("❌ عذراً، يجب كتابة التقرير اليومي أولاً!")
+                                        st.error("❌ يجب كتابة التقرير اليومي أولاً!")
                             with c_btn2:
                                 if st.button("🔴 تسجيل انصراف نهائي اليوم", use_container_width=True):
                                     if is_exempt or daily_rep.strip():
                                         db_execute("INSERT INTO WebAttendance (emp_id, date, time, action, distance, location_name, photo, project_name, daily_report) VALUES (%s, %s, %s, 'انصراف', %s, %s, %s, %s, %s)", (emp_id, today_date, now_dt.strftime("%H:%M"), int(min_distance), closest_loc_name, photo_uri, selected_proj, daily_rep))
-                                        log_event("بصمة انصراف", f"الموقع: {closest_loc_name} - مشروع: {selected_proj}")
                                         st.success("تم تسجيل الانصراف بنجاح!")
                                         st.rerun() 
                                     else:
-                                        st.error("❌ عذراً، لا يمكنك تسجيل الانصراف بدون كتابة التقرير اليومي!")
+                                        st.error("❌ لا يمكنك تسجيل الانصراف بدون التقرير اليومي!")
                 else:
-                    st.error(f"❌ أنت خارج النطاق المسموح. أقرب موقع عمل لك هو ({closest_loc_name}) ويبعد عنك بمسافة {int(min_distance)} متر.")
+                    st.error("❌ أنت خارج النطاق المسموح للشركة.")
             else:
-                st.info("جاري تحديد موقعك الجغرافي... يرجى التأكد من تشغيل وتصريح الـ GPS للمتصفح.")
+                st.info("جاري تحديد موقعك الجغرافي... تأكد من تشغيل الـ GPS.")
 
     elif sub_nav == "📝 تقديم طلب جديد":
         with st.form("emp_req"):
             req_type = st.selectbox("النوع", ["إجازة", "مأمورية", "إذن", "عمل من المنزل"])
             req_date = st.date_input("التاريخ")
-            notes = st.text_input("السبب أو التفاصيل")
-            
+            notes = st.text_input("السبب")
             if st.form_submit_button("إرسال الطلب", type="primary"):
                 if req_type == "إجازة" and balance <= 0:
-                    st.error("❌ عذراً، لقد استنفدت رصيد إجازاتك السنوية المتبقي بالكامل! يرجى مراجعة الـ HR.")
+                    st.error("❌ استنفدت رصيد إجازاتك!")
                 else:
                     db_execute("INSERT INTO Requests (emp_id, date, req_type, notes, status) VALUES (%s, %s, %s, %s, 'قيد الانتظار')", (emp_id, req_date.strftime("%Y/%m/%d"), req_type, notes))
-                    log_event("تقديم طلب إجازة/إذن", f"النوع: {req_type} - التاريخ: {req_date}")
-                    st.success("تم إرسال الطلب لمديرك المباشر بنجاح.")
+                    st.success("تم الإرسال لمديرك المباشر.")
                 
     elif sub_nav == "🌴 سجلاتي":
         conn = get_db_connection()
@@ -2075,71 +1968,61 @@ def render_employee_dashboard(emp_id, balance):
         if not df.empty:
             pending_my_reqs = df[df['status'] == 'قيد الانتظار']
             if not pending_my_reqs.empty:
-                with st.expander("🗑️ إلغاء طلب قيد الانتظار (التراجع عن طلب)"):
+                with st.expander("🗑️ إلغاء طلب قيد الانتظار"):
                     rc1, rc2 = st.columns([3, 1])
                     r_opts = pending_my_reqs['id'].astype(str) + " - " + pending_my_reqs['req_type'] + " (" + pending_my_reqs['date'] + ")"
-                    sel_r_del = rc1.selectbox("اختر الطلب المراد إلغاؤه:", r_opts)
+                    sel_r_del = rc1.selectbox("اختر الطلب:", r_opts)
                     if rc2.button("إلغاء الطلب 🗑️"):
                         r_id_del = int(sel_r_del.split(" - ")[0])
                         db_execute("DELETE FROM Requests WHERE id=%s", (r_id_del,))
-                        log_event("إلغاء طلب موظف", f"قام الموظف بإلغاء طلبه رقم {r_id_del}")
                         st.success("تم إلغاء الطلب بنجاح!")
                         st.rerun()
-                        
             disp_r = df.drop(columns=['id'])
             disp_r.columns = ['التاريخ', 'نوع الطلب', 'الحالة']
             st.dataframe(disp_r, hide_index=True, use_container_width=True)
         else:
-            st.info("لا توجد طلبات مسجلة لك حتى الآن.")
+            st.info("لا توجد طلبات مسجلة لك.")
+
 # ==========================================
-# 8. دوال الشؤون القانونية (العقود، التوكيلات، ومحفظة الشيكات)
+# 8. دوال الشؤون القانونية (العقود، التوكيلات، الشيكات)
 # ==========================================
 def render_legal_archive_module():
     st.subheader("📜 أرشفة العقود والتوكيلات القانونية")
-    
-    # التأكد من وجود الجدول في قاعدة البيانات
     try:
         db_execute('''CREATE TABLE IF NOT EXISTS LegalArchive (
-            id SERIAL PRIMARY KEY,
-            doc_type TEXT,
-            client_name TEXT,
-            project_name TEXT,
-            doc_details TEXT,
-            file_data TEXT,
-            date_added TEXT
+            id SERIAL PRIMARY KEY, doc_type TEXT, client_name TEXT, project_name TEXT, 
+            doc_details TEXT, file_data TEXT, date_added TEXT
         )''')
-    except:
+    except Exception:
         pass
 
     with st.form("add_legal_doc"):
         c1, c2, c3 = st.columns(3)
         doc_type = c1.selectbox("نوع المستند", ["توكيل رسمي", "عقد وحدة / أرض", "مستندات ملكية", "أخرى"])
         client_name = c2.text_input("اسم العميل / المالك")
-        project_name = c3.selectbox("المشروع (الاتحاد)", ["الكل", "الشركة"] + [f"اتحاد {i}" for i in range(1, 46)])
+        project_name = c3.selectbox("المشروع", ["الكل", "الشركة"] + [f"اتحاد {i}" for i in range(1, 46)])
         
         c4, c5 = st.columns([2, 1])
         doc_details = c4.text_input("تفاصيل المستند (مثال: توكيل عام قضايا رقم 1234 لسنة 2026)")
-        doc_file = c5.file_uploader("إرفاق المستند (PDF / صورة)", type=['pdf', 'png', 'jpg', 'jpeg'])
+        doc_file = c5.file_uploader("إرفاق المستند (PDF/صورة)", type=['pdf', 'png', 'jpg', 'jpeg'])
         
         if st.form_submit_button("حفظ في الأرشيف 💾", type="primary"):
             if client_name.strip() and doc_details.strip():
                 file_b64 = ""
                 if doc_file:
                     file_b64, err = encode_and_compress_uploaded_file(doc_file)
-                    if err:
-                        st.error(err)
-                        st.stop()
-                
                 db_execute("INSERT INTO LegalArchive (doc_type, client_name, project_name, doc_details, file_data, date_added) VALUES (%s, %s, %s, %s, %s, %s)", 
                            (doc_type, client_name.strip(), project_name, doc_details.strip(), file_b64, get_egypt_time().strftime("%Y/%m/%d")))
-                log_event("أرشفة مستند قانوني", f"{doc_type} - للعميل: {client_name}")
                 st.success("تم أرشفة المستند بنجاح!")
                 st.rerun()
             else:
-                st.error("يرجى إدخال اسم العميل وتفاصيل المستند.")
+                st.error("أدخل اسم العميل وتفاصيل المستند.")
 
     conn = get_db_connection()
-    archive_df = pd.read_sql_query("SELECT id, doc_type, client_name, project_name, doc_details, date_added, file_data FROM LegalArchive ORDER BY id DESC", conn)
+    try:
+        archive_df = pd.read_sql_query("SELECT id, doc_type, client_name, project_name, doc_details, date_added, file_data FROM LegalArchive ORDER BY id DESC", conn)
+    except Exception:
+        archive_df = pd.DataFrame()
     conn.close()
 
     if not archive_df.empty:
@@ -2148,17 +2031,14 @@ def render_legal_archive_module():
             with st.expander(f"📁 {row['doc_type']} | {row['client_name']} | {row['project_name']} ({row['date_added']})"):
                 st.write(f"**التفاصيل:** {row['doc_details']}")
                 col_btn1, col_btn2 = st.columns(2)
-                
                 if pd.notna(row['file_data']) and len(str(row['file_data'])) > 10:
                     try:
                         decoded_file = base64.b64decode(row['file_data'])
                         col_btn1.download_button("📥 تحميل المستند", data=decoded_file, file_name=f"Document_{row['id']}.pdf", mime="application/octet-stream", key=f"dl_doc_{row['id']}")
-                    except:
+                    except Exception:
                         pass
-                
                 if col_btn2.button("🗑️ حذف المستند", key=f"del_doc_{row['id']}"):
                     db_execute("DELETE FROM LegalArchive WHERE id=%s", (row['id'],))
-                    log_event("حذف مستند قانوني", f"رقم {row['id']}")
                     st.rerun()
     else:
         st.info("لا توجد مستندات في الأرشيف القانوني حالياً.")
@@ -2186,21 +2066,19 @@ def render_cheques_module(can_edit=True):
                     file_b64 = ""
                     if ch_file:
                         file_b64, err = encode_and_compress_uploaded_file(ch_file)
-                    
                     db_execute(
                         "INSERT INTO Cheques (unit_code, client_name, cheque_number, amount, currency, due_date, file_data, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
                         (ch_unit.strip(), ch_client.strip(), ch_num.strip(), ch_amt, ch_curr, ch_due.strftime("%Y/%m/%d"), file_b64, ch_status)
                     )
-                    log_event("إضافة شيك بنكي", f"العميل: {ch_client} - رقم: {ch_num}")
                     st.success("تم حفظ الشيك بنجاح!")
                     st.rerun()
                 else:
-                    st.error("يرجى إدخال اسم العميل ورقم الشيك والقيمة.")
+                    st.error("أكمل بيانات الشيك.")
 
     conn = get_db_connection()
     try:
         chq_df = pd.read_sql_query("SELECT id, unit_code, client_name, cheque_number, amount, COALESCE(currency, 'ج.م (EGP)') as currency, due_date, status FROM Cheques ORDER BY due_date ASC", conn)
-    except:
+    except Exception:
         chq_df = pd.DataFrame()
     conn.close()
 
@@ -2225,4 +2103,3 @@ def render_cheques_module(can_edit=True):
         st.dataframe(disp_chq, use_container_width=True, hide_index=True)
     else:
         st.info("لا توجد شيكات مسجلة حالياً.")
-            
