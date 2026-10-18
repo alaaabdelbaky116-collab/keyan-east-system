@@ -541,12 +541,16 @@ def render_security_and_backup_center(key_prefix="sec_main_"):
     col_b1, col_b2 = st.columns(2)
     
     with col_b1:
-        st.markdown("##### 🗓️ تنظيف صور البصمة الشهري (صلاحية المالك والأدمن)")
-        st.caption("يقوم النظام تلقائياً يوم 1 من كل شهر بمسح صور كاميرا الشهور السابقة مع بقاء جميع سجلات وتواريخ الحضور والتقارير اليومية، ويمكنك تشغيله يدوياً الآن:")
-        if st.button("🗓️ مسح صور الشهور السابقة (تنظيف أول الشهر)", key=f"{key_prefix}btn_monthly_cln", type="primary", use_container_width=True):
-            del_cnt, cutoff_dt = cleanup_previous_months_photos(is_auto=False)
-            st.success(f"✅ تم مسح صور الكاميرا لعدد ({del_cnt}) سجل أقدم من ({cutoff_dt}) بنجاح مع الاحتفاظ الكامل بسجلات الحضور والتقارير!")
-            st.rerun()
+        if active_role == 'admin':
+            st.markdown("##### 🗓️ تنظيف صور البصمة الشهري (صلاحية الأدمن فقط)")
+            st.caption("يقوم النظام تلقائياً يوم 1 من كل شهر بمسح صور كاميرا الشهور السابقة مع بقاء جميع سجلات وتواريخ الحضور والتقارير اليومية، ويمكنك تشغيله يدوياً الآن:")
+            if st.button("🗓️ مسح صور الشهور السابقة (تنظيف أول الشهر)", key=f"{key_prefix}btn_monthly_cln", type="primary", use_container_width=True):
+                del_cnt, cutoff_dt = cleanup_previous_months_photos(is_auto=False)
+                st.success(f"✅ تم مسح صور الكاميرا لعدد ({del_cnt}) سجل أقدم من ({cutoff_dt}) بنجاح مع الاحتفاظ الكامل بسجلات الحضور والتقارير!")
+                st.rerun()
+        else:
+            st.markdown("##### 🗓️ تنظيف صور البصمة الشهري")
+            st.info("ℹ️ التنظيف اليدوي للصور متاح لمسؤول النظام (Admin) فقط. النظام يقوم بالتنظيف الآلي المبرمج يوم 1 من كل شهر.")
 
     with col_b2:
         st.markdown("##### 📦 النسخة الاحتياطية الشاملة (Excel Backup)")
