@@ -8,7 +8,6 @@ from modules import *
 
 st.set_page_config(page_title="Keyan-East ERP System", page_icon="🏢", layout="wide")
 
-# تهيئة الجداول والتصميم والتنظيف التلقائي أول الشهر
 setup_database_v6()
 ensure_shareholders_union_schema()
 apply_custom_theme()
@@ -33,7 +32,7 @@ def login_page():
                 c_img1, c_img2, c_img3 = st.columns([1, 1.5, 1])
                 with c_img2:
                     st.image(LOGO_FILE, use_container_width=True)
-        except:
+        except Exception:
             pass
             
         st.markdown("<h2 style='text-align: center; color: #D4AF37;'>بوابة كيان الشرقية الرقمية (ERP)</h2>", unsafe_allow_html=True)
@@ -69,13 +68,12 @@ else:
     render_sidebar(role_title)
     render_smart_alerts()
 
-# ==========================================
+    # ==========================================
     # 1. لوحة المالك (Owner) أو مسؤول النظام (Admin)
     # ==========================================
     if role in ['owner', 'admin']:
         st.title(f"👑 لوحة القيادة العليا ({role_title})")
         
-        # تغيير اسم تبويب الأمان بناءً على الصلاحية (لإخفاء كلمة Logs من المالك)
         sec_tab_name = "⚙️ الأمان والـ Logs" if role == 'admin' else "⚙️ الأمان والمساحة"
         
         nav_tabs = st.tabs([
@@ -96,7 +94,6 @@ else:
         with nav_tabs[2]:
             render_clients_and_crm_module(mode="owner", key_prefix="own_crm_")
         with nav_tabs[3]:
-            # تمرير False لضمان إغلاق أي نماذج إضافة أو تعديل في الحسابات عن المالك
             render_financials_module(can_edit=False) 
         with nav_tabs[4]:
             render_manage_extracts()
@@ -114,8 +111,6 @@ else:
             render_employee_dashboard(emp_id, balance)
         with nav_tabs[7]:
             render_security_and_backup_center(key_prefix="tab_sec_")
-            
-            # حجب سجلات النظام (Logs) تماماً عن المالك، وعرضها لمسؤول النظام (Admin) فقط
             if role == 'admin':
                 st.divider()
                 st.subheader("🕵️ سجل مراقبة العمليات (Audit Logs)")
@@ -125,19 +120,26 @@ else:
                 st.dataframe(logs_df, use_container_width=True, hide_index=True)
             else:
                 st.info("ℹ️ سجلات مراقبة النظام والعمليات (Audit Logs) محجوبة، ومتاحة لمسؤول النظام (Admin) فقط.")
+
     # ==========================================
-    # 2. لوحة خدمة العملاء والمبيعات (الجهة الوحيدة المخولة بإضافة الملاك والأقساط)
+    # 2. لوحة خدمة العملاء والمبيعات (Sales)
     # ==========================================
     elif role == 'sales':
         st.title("🤝 إدارة اتحاد الملاك المساهمين وخدمة العملاء")
-        tabs = st.tabs(["🤝 منظومة اتحاد الملاك وإضافة العملاء والأقساط", "🏠 لوحتي الشخصية (البصمة)"])
+        tabs = st.tabs([
+            "🤝 منظومة اتحاد الملاك وإضافة العملاء والأقساط",
+            "🏛️ أقساط الجهاز",
+            "🏠 لوحتي الشخصية (البصمة)"
+        ])
         with tabs[0]:
             render_clients_and_crm_module(mode="sales", key_prefix="sales_")
         with tabs[1]:
+            render_financials_module(can_edit=True)
+        with tabs[2]:
             render_employee_dashboard(emp_id, balance)
 
     # ==========================================
-    # 3. لوحة الحسابات والمالية (Accountant) - بدون صلاحية إضافة عملاء أو أقساط لهم
+    # 3. لوحة الحسابات والمالية (Accountant)
     # ==========================================
     elif role == 'accountant':
         st.title("💰 الإدارة المالية والحسابات")
@@ -170,9 +172,9 @@ else:
         with tabs[0]:
             render_clients_and_crm_module(mode="legal", key_prefix="leg_")
         with tabs[1]:
-            render_legal_archive_module()  # دالة العقود والتوكيلات
+            render_legal_archive_module()
         with tabs[2]:
-            render_cheques_module(can_edit=True)  # دالة الشيكات
+            render_cheques_module(can_edit=True)
         with tabs[3]:
             render_employee_dashboard(emp_id, balance)
 
