@@ -2103,3 +2103,49 @@ def render_cheques_module(can_edit=True):
         st.dataframe(disp_chq, use_container_width=True, hide_index=True)
     else:
         st.info("لا توجد شيكات مسجلة حالياً.")
+# ==========================================
+# 9. لوحة تقارير إنجاز ومهام المشاريع (للمالك والإدارة)
+# ==========================================
+def render_project_daily_reports():
+    st.subheader("🏗️ تقارير إنجاز المشاريع (التقارير اليومية للمهندسين والموظفين)")
+    st.info("💡 يمكنك من هنا متابعة ما تم إنجازه يومياً في كل مشروع على حدة من خلال التقارير التي يرفعها الموظفون والمهندسون.")
+    
+    conn = get_db_connection()
+    try:
+        projs = db_fetchall("SELECT DISTINCT project_name FROM WebAttendance WHERE project_name IS NOT NULL AND project_name != ''")
+        proj_list = ["الكل"] + sorted([p[0] for p in projs if str(p[0]).strip() != ""])
+    except Exception:
+        proj_list = ["الكل"]
+        
+    c1, c2 = st.columns(2)
+    sel_proj = c1.selectbox("🏢 فلترة حسب المشروع (الاتحاد):", proj_list, key="proj_rep_sel")
+    sel_date = c2.date_input("📅 تاريخ التقرير:", value=get_egypt_time().date(), key="proj_rep_dt")
+    
+    query = """
+        SELECT e.name, e.department, w.time, w.action, w.project_name, w.daily_report 
+        FROM WebAttendance w 
+        JOIN Employees e ON w.emp_id = e.emp_id 
+        WHERE w.date = %s AND w.action IN ('تقرير', 'انصراف', 'إنجاز مهمة')
+          AND w.daily_report IS NOT NULL AND w.daily_report != ''
+    """
+    params = [sel_date.strftime("%Y/%m/%d")]
+    
+    if sel_proj != "الكل":
+        query += " AND w.project_name = %s"
+        params.append(sel_proj)
+        
+    query += " ORDER BY w.time DESC"
+    
+    try:
+        rep_df = pd.read_sql_query(query, conn, params=tuple(params))
+    except Exception:
+        rep_df = pd.DataFrame()
+    conn.close()
+    
+    if not rep_df.empty:
+        st.success(f"تم العثور على ({len(rep_df)}) تقرير إنجاز بتاريخ {sel_date.strftime('%Y/%m/%d')}")
+        disp_df = rep_df[['project_name', 'name', 'department', 'time', 'action', 'daily_report']].copy()
+        disp_df.columns = ['المشروع / الاتحاد', 'اسم الموظف', 'القسم', 'وقت التسجيل', 'نوع الإجراء', 'تفاصيل الإنجاز (التقرير اليومي)']
+        st.dataframe(disp_df, use_container_width=True, hide_index=True)
+    else:
+        st.warning("لا توجد تقارير إنجاز مسجلة في هذا التاريخ للمشروع المحدد.")
