@@ -161,10 +161,19 @@ else:
     # ==========================================
     elif role == 'legal':
         st.title("⚖️ إدارة العقود والشؤون القانونية")
-        tabs = st.tabs(["⚖️ متابعة المتأخرات واتحاد الملاك", "🏠 لوحتي الشخصية (البصمة)"])
+        tabs = st.tabs([
+            "⚖️ متابعة المتأخرات والتصعيد", 
+            "📜 أرشفة العقود والتوكيلات",
+            "🏦 محفظة الشيكات",
+            "🏠 لوحتي الشخصية (البصمة)"
+        ])
         with tabs[0]:
             render_clients_and_crm_module(mode="legal", key_prefix="leg_")
         with tabs[1]:
+            render_legal_archive_module()  # دالة العقود والتوكيلات
+        with tabs[2]:
+            render_cheques_module(can_edit=True)  # دالة الشيكات
+        with tabs[3]:
             render_employee_dashboard(emp_id, balance)
 
     # ==========================================
