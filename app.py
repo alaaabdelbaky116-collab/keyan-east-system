@@ -74,53 +74,58 @@ else:
     if role in ['owner', 'admin']:
         st.title(f"👑 لوحة القيادة العليا ({role_title})")
         
-        sec_tab_name = "⚙️ الأمان والـ Logs" if role == 'admin' else "⚙️ الأمان والمساحة"
+        # ترتيب التبويبات الأساسية المشتركة
+        tab_titles = [
+            "📊 المؤشرات والحاضرين",
+            "🏗️ تقارير إنجاز المشاريع",
+            "📋 إسناد المهام",
+            "🤝 اتحاد الملاك",
+            "🏛️ أقساط الجهاز",
+            "📄 المستخلصات",
+            "👥 تقارير الحضور والـ HR"
+        ]
         
-        nav_tabs = st.tabs([
-            "📊 المؤشرات والحاضرين والغائبين",
-            "📋 إسناد مهام لأي موظف بالشركة",
-            "🤝 متابعة اتحاد الملاك واعتماد الاستثناءات",
-            "🏛️ متابعة أقساط الجهاز (اطلاع فقط)",
-            "📄 رادار المستخلصات الهندسية",
-            "👥 تقارير الحضور والـ HR",
-            "🏠 لوحتي الشخصية (البصمة)",
-            sec_tab_name
-        ])
+        # إضافة تبويبات مخصصة للأدمن فقط (البصمة الشخصية + الـ Logs)
+        if role == 'admin':
+            tab_titles.append("🏠 لوحتي الشخصية (البصمة)")
+            tab_titles.append("⚙️ الأمان والـ Logs")
+        else:
+            # المالك لن يرى لوحة البصمة أبداً، وسيرى الأمان فقط بدون Logs
+            tab_titles.append("⚙️ الأمان والمساحة")
+            
+        nav_tabs = st.tabs(tab_titles)
         
-        with nav_tabs[0]:
-            render_company_dashboard()
-        with nav_tabs[1]:
-            render_task_delegation("الكل")
-        with nav_tabs[2]:
-            render_clients_and_crm_module(mode="owner", key_prefix="own_crm_")
-        with nav_tabs[3]:
-            render_financials_module(can_edit=False) 
-        with nav_tabs[4]:
-            render_manage_extracts()
-        with nav_tabs[5]:
-            hr_sub = st.tabs(["🟢 كشف الحاضرين والغائبين", "📸 سجل الحضور التفصيلي", "🌴 أرصدة الإجازات السنوية", "🛡️ إعفاء التقارير اليومية"])
-            with hr_sub[0]:
-                render_present_and_absent_employees_widget(key_prefix="hr_sub_")
-            with hr_sub[1]:
-                render_attendance_report()
-            with hr_sub[2]:
-                render_leave_balance_management()
-            with hr_sub[3]:
-                render_department_exemption_manager("الكل")
+        with nav_tabs[0]: render_company_dashboard()
+        with nav_tabs[1]: render_project_daily_reports()
+        with nav_tabs[2]: render_task_delegation("الكل")
+        with nav_tabs[3]: render_clients_and_crm_module(mode="owner", key_prefix=f"{role}_crm_")
+        with nav_tabs[4]: render_financials_module(can_edit=(role == 'admin')) 
+        with nav_tabs[5]: render_manage_extracts()
         with nav_tabs[6]:
-            render_employee_dashboard(emp_id, balance)
-        with nav_tabs[7]:
-            render_security_and_backup_center(key_prefix="tab_sec_")
-            if role == 'admin':
+            hr_sub = st.tabs(["🟢 كشف الحاضرين والغائبين", "📸 سجل الحضور التفصيلي", "🌴 أرصدة الإجازات السنوية", "🛡️ إعفاء التقارير اليومية"])
+            with hr_sub[0]: render_present_and_absent_employees_widget(key_prefix=f"hr_sub_{role}_")
+            with hr_sub[1]: render_attendance_report()
+            with hr_sub[2]: render_leave_balance_management()
+            with hr_sub[3]: render_department_exemption_manager("الكل")
+            
+        if role == 'admin':
+            with nav_tabs[7]: render_employee_dashboard(emp_id, balance)
+            with nav_tabs[8]: 
+                render_security_and_backup_center(key_prefix="sec_admin_")
                 st.divider()
                 st.subheader("🕵️ سجل مراقبة العمليات (Audit Logs)")
                 conn = get_db_connection()
-                logs_df = pd.read_sql_query("SELECT log_time AS \"التوقيت\", username AS \"المستخدم\", role AS \"الصلاحية\", action_type AS \"العملية\", details AS \"التفاصيل\" FROM AuditLogs ORDER BY id DESC LIMIT 300", conn)
+                try:
+                    logs_df = pd.read_sql_query("SELECT log_time AS \"التوقيت\", username AS \"المستخدم\", role AS \"الصلاحية\", action_type AS \"العملية\", details AS \"التفاصيل\" FROM AuditLogs ORDER BY id DESC LIMIT 300", conn)
+                    st.dataframe(logs_df, use_container_width=True, hide_index=True)
+                except Exception: pass
                 conn.close()
-                st.dataframe(logs_df, use_container_width=True, hide_index=True)
-            else:
+        else:
+            # التبويب رقم 7 للمالك هو الأمان والمساحة فقط
+            with nav_tabs[7]: 
+                render_security_and_backup_center(key_prefix="sec_owner_")
                 st.info("ℹ️ سجلات مراقبة النظام والعمليات (Audit Logs) محجوبة، ومتاحة لمسؤول النظام (Admin) فقط.")
-
+                
     # ==========================================
     # 2. لوحة خدمة العملاء والمبيعات (Sales)
     # ==========================================
