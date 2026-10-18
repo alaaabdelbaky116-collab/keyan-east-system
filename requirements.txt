@@ -8,3 +8,4 @@ xlrd
 pytz
 plotly
 python-pptx
+xlsxwriter
