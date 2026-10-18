@@ -1720,28 +1720,45 @@ def render_clients_and_crm_module(mode="view", key_prefix=""):
                         db_execute("UPDATE UnitInstallments SET status='مدفوع في الموعد', paid_date=%s, collection_stage='تم السداد / مغلق', call_notes=%s WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), new_log, target_id))
                         st.rerun()
 
-            if is_legal and not unpaid_df.empty:
-                st.markdown("#### ⚖️ مطالبات المساهمين المحولة للشؤون القانونية")
+           if is_legal and not unpaid_df.empty:
+                st.markdown("#### ⚖️ مطالبات المساهمين المحولة للشؤون القانونية من خدمة العملاء")
                 leg_df = unpaid_df[unpaid_df['collection_stage'].isin(['محول للشؤون القانونية', 'تمت مكالمة الشؤون القانونية'])]
                 if not leg_df.empty:
                     leg_opts = leg_df['id'].astype(str) + " - المساهم: " + leg_df['client_name'].fillna('') + " | " + leg_df['project_name'].fillna('') + " (" + leg_df['quarter_name'].fillna('') + ")"
                     sel_leg_inst = st.selectbox("اختر الملف:", leg_opts, key=f"{key_prefix}leg_esc_sel")
                     target_leg_id = int(sel_leg_inst.split(" - ")[0])
-                    old_leg_notes = leg_df[leg_df['id'] == target_leg_id].iloc[0]['call_notes'] or ""
-                    leg_note_input = st.text_input("ملاحظة الشؤون القانونية:", key=f"{key_prefix}leg_note_in")
+                    
+                    target_row = leg_df[leg_df['id'] == target_leg_id].iloc[0]
+                    old_leg_notes = target_row['call_notes'] or ""
+                    current_stage = target_row['collection_stage']
+                    
+                    st.warning(f"**سجل المكالمات السابق:** {old_leg_notes}")
+                    leg_note_input = st.text_input("ملاحظة الشؤون القانونية الجديدة:", key=f"{key_prefix}leg_note_in")
+                    
                     lb1, lb2, lb3 = st.columns(3)
                     now_tag = get_egypt_time().strftime("%Y/%m/%d %H:%M")
-                    if lb1.button("📞 تسجيل مكالمة إنذار قانوني", key=f"{key_prefix}lb1", use_container_width=True):
+                    
+                    # 1. زر محاولة الاتصال والإنذار
+                    if lb1.button("📞 تسجيل مكالمة/إنذار قانوني", key=f"{key_prefix}lb1", use_container_width=True):
                         new_log = f"{old_leg_notes} | [إنذار قانوني {now_tag}: {leg_note_input}]".strip(" |")
                         db_execute("UPDATE UnitInstallments SET collection_stage='تمت مكالمة الشؤون القانونية', call_notes=%s WHERE id=%s", (new_log, target_leg_id))
                         st.rerun()
-                    if lb2.button("👑 تصعيد لمالك الشركة", key=f"{key_prefix}lb2", type="primary", use_container_width=True):
-                        new_log = f"{old_leg_notes} | [تصعيد للمالك {now_tag}: {leg_note_input}]".strip(" |")
-                        db_execute("UPDATE UnitInstallments SET collection_stage='محول للمالك (لتدخل الإدارة العليا)', call_notes=%s WHERE id=%s", (new_log, target_leg_id))
-                        st.rerun()
-                    if lb3.button("✅ تم السداد", key=f"{key_prefix}lb3", use_container_width=True):
+                        
+                    # 2. زر التصعيد للمالك (لا يظهر إلا لو الحالة 'تمت مكالمة الشؤون القانونية')
+                    if current_stage == 'تمت مكالمة الشؤون القانونية':
+                        if lb2.button("👑 تصعيد لمالك الشركة", key=f"{key_prefix}lb2", type="primary", use_container_width=True):
+                            new_log = f"{old_leg_notes} | [تصعيد للمالك بعد محاولة {now_tag}: {leg_note_input}]".strip(" |")
+                            db_execute("UPDATE UnitInstallments SET collection_stage='محول للمالك (لتدخل الإدارة العليا)', call_notes=%s WHERE id=%s", (new_log, target_leg_id))
+                            st.rerun()
+                    else:
+                        lb2.info("⚠️ زر تحويل العميل للمالك سيظهر هنا بعد تسجيل مكالمة معه أولاً.")
+                        
+                    # 3. زر السداد
+                    if lb3.button("✅ تم السداد والتسوية", key=f"{key_prefix}lb3", use_container_width=True):
                         db_execute("UPDATE UnitInstallments SET status='مدفوع متأخر', paid_date=%s, collection_stage='تم السداد / مغلق' WHERE id=%s", (get_egypt_time().strftime("%Y/%m/%d"), target_leg_id))
                         st.rerun()
+                else:
+                    st.success("🎉 لا توجد ملفات متأخرات محولة من خدمة العملاء للشؤون القانونية حالياً.")
 
             if is_owner and not unpaid_df.empty:
                 own_esc_df = unpaid_df[unpaid_df['collection_stage'] == 'محول للمالك (لتدخل الإدارة العليا)']
@@ -2074,3 +2091,138 @@ def render_employee_dashboard(emp_id, balance):
             st.dataframe(disp_r, hide_index=True, use_container_width=True)
         else:
             st.info("لا توجد طلبات مسجلة لك حتى الآن.")
+# ==========================================
+# 8. دوال الشؤون القانونية (العقود، التوكيلات، ومحفظة الشيكات)
+# ==========================================
+def render_legal_archive_module():
+    st.subheader("📜 أرشفة العقود والتوكيلات القانونية")
+    
+    # التأكد من وجود الجدول في قاعدة البيانات
+    try:
+        db_execute('''CREATE TABLE IF NOT EXISTS LegalArchive (
+            id SERIAL PRIMARY KEY,
+            doc_type TEXT,
+            client_name TEXT,
+            project_name TEXT,
+            doc_details TEXT,
+            file_data TEXT,
+            date_added TEXT
+        )''')
+    except:
+        pass
+
+    with st.form("add_legal_doc"):
+        c1, c2, c3 = st.columns(3)
+        doc_type = c1.selectbox("نوع المستند", ["توكيل رسمي", "عقد وحدة / أرض", "مستندات ملكية", "أخرى"])
+        client_name = c2.text_input("اسم العميل / المالك")
+        project_name = c3.selectbox("المشروع (الاتحاد)", ["الكل", "الشركة"] + [f"اتحاد {i}" for i in range(1, 46)])
+        
+        c4, c5 = st.columns([2, 1])
+        doc_details = c4.text_input("تفاصيل المستند (مثال: توكيل عام قضايا رقم 1234 لسنة 2026)")
+        doc_file = c5.file_uploader("إرفاق المستند (PDF / صورة)", type=['pdf', 'png', 'jpg', 'jpeg'])
+        
+        if st.form_submit_button("حفظ في الأرشيف 💾", type="primary"):
+            if client_name.strip() and doc_details.strip():
+                file_b64 = ""
+                if doc_file:
+                    file_b64, err = encode_and_compress_uploaded_file(doc_file)
+                    if err:
+                        st.error(err)
+                        st.stop()
+                
+                db_execute("INSERT INTO LegalArchive (doc_type, client_name, project_name, doc_details, file_data, date_added) VALUES (%s, %s, %s, %s, %s, %s)", 
+                           (doc_type, client_name.strip(), project_name, doc_details.strip(), file_b64, get_egypt_time().strftime("%Y/%m/%d")))
+                log_event("أرشفة مستند قانوني", f"{doc_type} - للعميل: {client_name}")
+                st.success("تم أرشفة المستند بنجاح!")
+                st.rerun()
+            else:
+                st.error("يرجى إدخال اسم العميل وتفاصيل المستند.")
+
+    conn = get_db_connection()
+    archive_df = pd.read_sql_query("SELECT id, doc_type, client_name, project_name, doc_details, date_added, file_data FROM LegalArchive ORDER BY id DESC", conn)
+    conn.close()
+
+    if not archive_df.empty:
+        st.markdown("#### 📂 السجل المؤرشف")
+        for _, row in archive_df.iterrows():
+            with st.expander(f"📁 {row['doc_type']} | {row['client_name']} | {row['project_name']} ({row['date_added']})"):
+                st.write(f"**التفاصيل:** {row['doc_details']}")
+                col_btn1, col_btn2 = st.columns(2)
+                
+                if pd.notna(row['file_data']) and len(str(row['file_data'])) > 10:
+                    try:
+                        decoded_file = base64.b64decode(row['file_data'])
+                        col_btn1.download_button("📥 تحميل المستند", data=decoded_file, file_name=f"Document_{row['id']}.pdf", mime="application/octet-stream", key=f"dl_doc_{row['id']}")
+                    except:
+                        pass
+                
+                if col_btn2.button("🗑️ حذف المستند", key=f"del_doc_{row['id']}"):
+                    db_execute("DELETE FROM LegalArchive WHERE id=%s", (row['id'],))
+                    log_event("حذف مستند قانوني", f"رقم {row['id']}")
+                    st.rerun()
+    else:
+        st.info("لا توجد مستندات في الأرشيف القانوني حالياً.")
+
+def render_cheques_module(can_edit=True):
+    st.subheader("🏦 إدارة محفظة الشيكات البنكية")
+    if can_edit:
+        with st.form("add_cheque_form"):
+            c1, c2, c3 = st.columns(3)
+            ch_unit = c1.text_input("المشروع / رقم الوحدة")
+            ch_client = c2.text_input("اسم العميل (صاحب الشيك)")
+            ch_num = c3.text_input("رقم الشيك والبنك")
+            
+            c4, c5, c6 = st.columns(3)
+            ch_amt = c4.number_input("قيمة الشيك", min_value=0.0, step=1000.0)
+            ch_curr = c5.selectbox("العملة", CURRENCY_OPTIONS, key="chq_curr_m")
+            ch_due = c6.date_input("تاريخ استحقاق الشيك")
+            
+            c7, c8 = st.columns(2)
+            ch_status = c7.selectbox("حالة الشيك", ["بالحافظة (تحت التحصيل)", "تم الصرف والتحصيل", "مرتد / مرفوض", "مسلم للعميل"])
+            ch_file = c8.file_uploader("صورة الشيك", type=['png', 'jpg', 'jpeg', 'pdf'])
+            
+            if st.form_submit_button("حفظ الشيك في المحفظة 💾", type="primary"):
+                if ch_client.strip() and ch_num.strip() and ch_amt > 0:
+                    file_b64 = ""
+                    if ch_file:
+                        file_b64, err = encode_and_compress_uploaded_file(ch_file)
+                    
+                    db_execute(
+                        "INSERT INTO Cheques (unit_code, client_name, cheque_number, amount, currency, due_date, file_data, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (ch_unit.strip(), ch_client.strip(), ch_num.strip(), ch_amt, ch_curr, ch_due.strftime("%Y/%m/%d"), file_b64, ch_status)
+                    )
+                    log_event("إضافة شيك بنكي", f"العميل: {ch_client} - رقم: {ch_num}")
+                    st.success("تم حفظ الشيك بنجاح!")
+                    st.rerun()
+                else:
+                    st.error("يرجى إدخال اسم العميل ورقم الشيك والقيمة.")
+
+    conn = get_db_connection()
+    try:
+        chq_df = pd.read_sql_query("SELECT id, unit_code, client_name, cheque_number, amount, COALESCE(currency, 'ج.م (EGP)') as currency, due_date, status FROM Cheques ORDER BY due_date ASC", conn)
+    except:
+        chq_df = pd.DataFrame()
+    conn.close()
+
+    if not chq_df.empty:
+        if can_edit:
+            with st.expander("🔄 تحديث حالة شيك أو حذفه"):
+                uc1, uc2, uc3, uc4 = st.columns(4)
+                ch_opts = chq_df['id'].astype(str) + " - " + chq_df['client_name'].fillna('') + " (" + chq_df['cheque_number'].fillna('') + ")"
+                sel_ch = uc1.selectbox("اختر الشيك:", ch_opts)
+                new_ch_st = uc2.selectbox("الحالة الجديدة:", ["تم الصرف والتحصيل", "بالحافظة (تحت التحصيل)", "مرتد / مرفوض", "مسلم للعميل"])
+                if uc3.button("تحديث الحالة ✅", key="upd_chq_btn"):
+                    ch_id = int(sel_ch.split(" - ")[0])
+                    db_execute("UPDATE Cheques SET status=%s WHERE id=%s", (new_ch_st, ch_id))
+                    st.rerun()
+                if uc4.button("🗑️ حذف الشيك", key="del_chq_btn"):
+                    ch_id = int(sel_ch.split(" - ")[0])
+                    db_execute("DELETE FROM Cheques WHERE id=%s", (ch_id,))
+                    st.rerun()
+
+        disp_chq = chq_df.drop(columns=['id'])
+        disp_chq.columns = ['المشروع/الوحدة', 'اسم العميل', 'رقم الشيك', 'المبلغ', 'العملة', 'تاريخ الاستحقاق', 'الحالة']
+        st.dataframe(disp_chq, use_container_width=True, hide_index=True)
+    else:
+        st.info("لا توجد شيكات مسجلة حالياً.")
+            
