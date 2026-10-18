@@ -618,14 +618,18 @@ def render_sidebar(role_title):
 
         active_role = st.session_state.get('current_role') or st.session_state.get('role')
         if active_role in ['owner', 'admin']:
-            with st.expander("🛡️ المساحة وتنظيف أول الشهر (للمالك والأدمن)"):
+            active_role = st.session_state.get('current_role') or st.session_state.get('role')
+        if active_role in ['owner', 'admin']:
+            with st.expander("🛡️ المساحة والنسخ الاحتياطي"):
                 used_mb, used_pct, _ = get_database_size_info_safe()
                 st.caption(f"💾 مساحة Supabase: **{used_mb} MB** / 500 MB ({used_pct}%)")
                 st.progress(min(1.0, used_pct / 100.0))
                 
-                if st.button("🗓️ مسح صور الشهور السابقة (تنظيف أول الشهر)", key="sb_monthly_cln", type="primary", use_container_width=True):
-                    del_cnt, cutoff_dt = cleanup_previous_months_photos(is_auto=False)
-                    st.success(f"تم مسح صور ({del_cnt}) سجل أقدم من {cutoff_dt}!")
+                # إظهار زر المسح للأدمن فقط
+                if active_role == 'admin':
+                    if st.button("🗓️ مسح صور الشهور السابقة", key="sb_monthly_cln", type="primary", use_container_width=True):
+                        del_cnt, cutoff_dt = cleanup_previous_months_photos(is_auto=False)
+                        st.success(f"تم مسح صور ({del_cnt}) سجل أقدم من {cutoff_dt}!")
                     
                 if st.button("📦 تجهيز نسخة احتياطية (Excel)", key="sb_prep_bk", use_container_width=True):
                     bk_bytes, bk_filename, bk_mime = generate_full_backup_safe()
